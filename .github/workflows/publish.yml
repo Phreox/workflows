@@ -150,10 +150,24 @@ jobs:
           java-version: "25"
           cache: maven
           cache-dependency-path: phreox/pom.xml
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            phreox/phreox-frontend
+            phreox/phreox-presence
+      - name: System libraries and appimagetool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake nasm pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev \
+            libxkbcommon-dev libwayland-dev libdbus-1-dev libgtk-3-dev libayatana-appindicator3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libdav1d-dev squashfs-tools desktop-file-utils
+          # A pinned release of appimagetool (the SHA-256 is the digest GitHub lists for release 1.9.1). The runner has no FUSE, so the tool unpacks itself.
+          curl -fsSL -o "$RUNNER_TEMP/appimagetool.AppImage" https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  $RUNNER_TEMP/appimagetool.AppImage" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/appimagetool.AppImage"
+          printf '#!/bin/sh\nexec "%s" --appimage-extract-and-run "$@"\n' "$RUNNER_TEMP/appimagetool.AppImage" | sudo tee /usr/local/bin/appimagetool > /dev/null
+          sudo chmod +x /usr/local/bin/appimagetool
       - name: libopus and PortAudio of every platform
         continue-on-error: true
         run: |
@@ -167,22 +181,28 @@ jobs:
       - name: Backend jar and the Java runtime that ships with the app
         run: |
           mvn -B -q -pl phreox-backend -am -DskipTests package
-          node phreox-app/scripts/make-runtime.mjs
-      - name: Make this checkout the app of the channel
-        working-directory: phreox/phreox-app
+          bash phreox-frontend/scripts/platform-make-runtime.sh phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/jre"
+      - name: The presence helper
+        run: cargo build --release --manifest-path phreox-presence/Cargo.toml
+      - name: The app of the channel
+        working-directory: phreox/phreox-frontend
         env:
-          PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
-        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
-      - name: Install
-        run: |
-          (cd phreox-frontend && npm ci)
-          (cd phreox-app && npm install --no-audit --no-fund)
+          # The channel, the version and the token are compiled into the app (crates/phreox-platform/build.rs).
+          PHREOX_CHANNEL: ${ needs.plan.outputs.channel }
+          PHREOX_VERSION: ${ needs.plan.outputs.version }
+          PHREOX_UPDATE_TOKEN: ${ secrets.UPDATE_TOKEN }
+        run: cargo build --release -p phreox-app
       - name: Package
-        working-directory: phreox/phreox-app
-        run: npm run package:desktop
+        run: |
+          # libdav1d (the AV1 decoder) is not on every desktop: it goes into the AppImage.
+          export EXTRA_LIBS="$(ldd phreox-frontend/target/release/phreox | awk '/libdav1d/ {print $3}')"
+          bash phreox-frontend/scripts/platform-package-linux.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
+            --binary phreox-frontend/target/release/phreox --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
+            --presence phreox-presence/target/release/phreox-presence --games phreox-presence/detectable.json \
+            --icon phreox-frontend/crates/phreox-platform/assets/phreox-128.png --out "$RUNNER_TEMP/linux"
       - name: Into the release
         run: |
-          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.AppImage
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/linux/phreox-*.AppImage
           "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 
@@ -208,6 +228,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The web version and the Android app are the React app, which the Rust app does not replace: they are built from its own branch of the frontend repository
+      # (the commit in the submodule is the Rust app).
+      - name: The React app of the frontend
+        run: |
+          git -C phreox-frontend fetch --no-tags --depth=1 origin react-legacy
+          git -C phreox-frontend checkout --force FETCH_HEAD
+          git -C phreox-frontend log --oneline -1
       - name: Make this checkout the app of the channel
         working-directory: phreox/phreox-app
         env:
@@ -368,6 +395,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+      # The web version and the Android app are the React app, which the Rust app does not replace: they are built from its own branch of the frontend repository
+      # (the commit in the submodule is the Rust app).
+      - name: The React app of the frontend
+        run: |
+          git -C phreox-frontend fetch --no-tags --depth=1 origin react-legacy
+          git -C phreox-frontend checkout --force FETCH_HEAD
+          git -C phreox-frontend log --oneline -1
       - name: Build
         env:
           VITE_PHREOX_WEB: "1"
@@ -386,10 +420,13 @@ jobs:
 
   # The installers wait for a runner a long time: the release waits for them, but their failure does not hold it back.
   desktop-win:
+    # NOT SWITCHED ON: the Rust app has not been built for Windows anywhere yet (and there is no Electron build any more). Missing, in this order: the AV1 decoder (dav1d has
+    # no package on a runner: build it from source or leave AV1 out of this build), a run of this job to find out what else the build needs, and a run of the installer
+    # (NSIS with the WinShell plugin). Until it is switched on no Windows file is added to a release, and an installed Windows app is not offered an update.
     needs: [plan, natives]
-    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    if: ${{ false }}
     runs-on: windows-latest
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
     defaults:
@@ -408,10 +445,20 @@ jobs:
           java-version: "25"
           cache: maven
           cache-dependency-path: phreox/pom.xml
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            phreox/phreox-frontend
+            phreox/phreox-presence
+      - name: NSIS and its WinShell plugin
+        run: |
+          choco install nsis -y --no-progress
+          curl -fsSL -o "$RUNNER_TEMP/WinShell.zip" https://nsis.sourceforge.io/mediawiki/images/5/54/WinShell.zip
+          echo "34e111f8aacf64c540d848fd06b9d6f3e2c10cb825ec9329a01d1141973e749b  $RUNNER_TEMP/WinShell.zip" | sha256sum -c -
+          7z x -y -o"$RUNNER_TEMP/winshell" "$RUNNER_TEMP/WinShell.zip" > /dev/null
+          cp "$RUNNER_TEMP/winshell/Plugins/x86-unicode/WinShell.dll" "/c/Program Files (x86)/NSIS/Plugins/x86-unicode/"
+          echo "/c/Program Files (x86)/NSIS" >> "$GITHUB_PATH"
       - name: libopus and PortAudio of every platform
         continue-on-error: true
         run: |
@@ -425,30 +472,35 @@ jobs:
       - name: Backend jar and the Java runtime that ships with the app
         run: |
           mvn -B -q -pl phreox-backend -am -DskipTests package
-          node phreox-app/scripts/make-runtime.mjs
-      - name: Make this checkout the app of the channel
-        working-directory: phreox/phreox-app
+          bash phreox-frontend/scripts/platform-make-runtime.sh phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/jre"
+      - name: The presence helper
+        run: cargo build --release --manifest-path phreox-presence/Cargo.toml
+      - name: The app of the channel
+        working-directory: phreox/phreox-frontend
         env:
-          PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
-        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
-      - name: Install
-        run: |
-          (cd phreox-frontend && npm ci)
-          (cd phreox-app && npm install --no-audit --no-fund)
+          # The channel, the version and the token are compiled into the app (crates/phreox-platform/build.rs).
+          PHREOX_CHANNEL: ${ needs.plan.outputs.channel }
+          PHREOX_VERSION: ${ needs.plan.outputs.version }
+          PHREOX_UPDATE_TOKEN: ${ secrets.UPDATE_TOKEN }
+        run: cargo build --release -p phreox-app --no-default-features --features cpu-renderer
       - name: Package
-        working-directory: phreox/phreox-app
-        run: npm run package:desktop
+        run: |
+          bash phreox-frontend/scripts/platform-package-windows.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
+            --binary phreox-frontend/target/release/phreox.exe --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
+            --presence phreox-presence/target/release/phreox-presence.exe --games phreox-presence/detectable.json --out "$RUNNER_TEMP/win"
       - name: Into the release
         run: |
-          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.exe
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/win/phreox-*.exe
           "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 
   desktop-mac:
+    # NOT SWITCHED ON, like desktop-win: the Rust app has not been built on macOS yet. Missing: a run of this job (dav1d and nasm come from Homebrew here, but a built app
+    # would need them in the bundle or left out), and a start of the bundle on a machine without Homebrew.
     needs: [plan, natives]
-    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    if: ${{ false }}
     runs-on: macos-26
-    timeout-minutes: 40
+    timeout-minutes: 60
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
     defaults:
@@ -467,10 +519,14 @@ jobs:
           java-version: "25"
           cache: maven
           cache-dependency-path: phreox/pom.xml
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            phreox/phreox-frontend
+            phreox/phreox-presence
+      - name: Build tools
+        run: brew install pkg-config nasm dav1d
       - name: libopus and PortAudio of every platform
         continue-on-error: true
         run: |
@@ -484,22 +540,26 @@ jobs:
       - name: Backend jar and the Java runtime that ships with the app
         run: |
           mvn -B -q -pl phreox-backend -am -DskipTests package
-          node phreox-app/scripts/make-runtime.mjs
-      - name: Make this checkout the app of the channel
-        working-directory: phreox/phreox-app
+          bash phreox-frontend/scripts/platform-make-runtime.sh phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/jre"
+      - name: The presence helper
+        run: cargo build --release --manifest-path phreox-presence/Cargo.toml
+      - name: The app of the channel
+        working-directory: phreox/phreox-frontend
         env:
-          PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
-        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
-      - name: Install
-        run: |
-          (cd phreox-frontend && npm ci)
-          (cd phreox-app && npm install --no-audit --no-fund)
+          # The channel, the version and the token are compiled into the app (crates/phreox-platform/build.rs).
+          PHREOX_CHANNEL: ${ needs.plan.outputs.channel }
+          PHREOX_VERSION: ${ needs.plan.outputs.version }
+          PHREOX_UPDATE_TOKEN: ${ secrets.UPDATE_TOKEN }
+        run: cargo build --release -p phreox-app --no-default-features --features cpu-renderer
       - name: Package
-        working-directory: phreox/phreox-app
-        run: npm run package:desktop
+        run: |
+          bash phreox-frontend/scripts/platform-package-macos.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
+            --binary phreox-frontend/target/release/phreox --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
+            --presence phreox-presence/target/release/phreox-presence --games phreox-presence/detectable.json \
+            --icon phreox-frontend/crates/phreox-style/assets/phreox-logo-transparent.png --out "$RUNNER_TEMP/mac"
       - name: Into the release
         run: |
-          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.dmg
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/mac/phreox-*.dmg
           "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 

@@ -29,6 +29,12 @@ Nothing built is kept in a run. The release in `Phreox/releases` is made as a **
 writes `SHA256SUMS` from the digests GitHub made, replaces the previous dev release and publishes the draft. What a job needs of another (the libopus and PortAudio builds) is a file of the draft too
 (`natives-*.tar.gz`) and is removed before publishing. A run that fails or is cancelled throws its draft away.
 
+## The desktop app is Rust
+
+`phreox-frontend` is the Rust app (Blitz), built with `cargo` and packaged by `phreox-frontend/scripts/platform-package-*.sh`: no npm, no Electron. The `desktop` job (Linux, AppImage) builds it. `desktop-win` and `desktop-mac`
+are written but switched off (`if: ${{ false }}`) until a first run shows what the Windows and macOS builds still need (see the comments in the jobs); until then they add no file to a release. The web version and the Android
+app are the React app: the jobs check out the branch `react-legacy` of the frontend repository (the commit in the submodule is the Rust app) and build it with npm as before.
+
 ## Secrets (of this repository)
 
 | Secret | For |
