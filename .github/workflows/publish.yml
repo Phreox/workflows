@@ -509,11 +509,13 @@ jobs:
           "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 
+  # The macOS app is still Electron (the React app from react-legacy): phreox-platform of the Rust app does not compile on macOS yet (the tray types of muda and tray-icon are
+  # not Send, and chromium.rs needs the alloc feature of cbc for decrypt_padded_vec). The job of the Rust app is in the history: commit 8fe1c0e.
   desktop-mac:
     needs: [plan, natives]
     if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: macos-26
-    timeout-minutes: 90
+    timeout-minutes: 40
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
     defaults:
@@ -526,24 +528,14 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
+          frontend-branch: react-legacy
       - uses: ./.github/actions/java
         with:
           cache: "true"
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
         with:
-          workspaces: |
-            phreox/phreox-frontend
-            phreox/phreox-presence
-      - name: Tools of the build
-        # The packaging scripts use bash 4 (${name,,}); the one of macOS is 3.2.
-        run: brew install --quiet bash pkg-config meson ninja
-      - name: dav1d (the AV1 decoder, part of the executable)
-        working-directory: ${{ github.workspace }}
-        run: |
-          bash scripts/build-dav1d.sh "$RUNNER_TEMP/dav1d"
-          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/dav1d/lib/pkgconfig" >> "$GITHUB_ENV"
-          echo "SYSTEM_DEPS_DAV1D_LINK=static" >> "$GITHUB_ENV"
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
       - name: libopus and PortAudio of every platform
         continue-on-error: true
         run: |
@@ -557,25 +549,22 @@ jobs:
       - name: Backend jar and the Java runtime that ships with the app
         run: |
           mvn -B -q -pl phreox-backend -am -DskipTests package
-          bash phreox-frontend/scripts/platform-make-runtime.sh phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/jre"
-      - name: The presence helper
-        run: cargo build --release --manifest-path phreox-presence/Cargo.toml
-      - name: The app of the channel
-        working-directory: phreox/phreox-frontend
+          node phreox-app/scripts/make-runtime.mjs
+      - name: Make this checkout the app of the channel
+        working-directory: phreox/phreox-app
         env:
-          PHREOX_CHANNEL: ${{ needs.plan.outputs.channel }}
-          PHREOX_VERSION: ${{ needs.plan.outputs.version }}
           PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
-        run: cargo build --release -p phreox-app --no-default-features --features cpu-renderer
-      - name: Disk image
+        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
+      - name: Install
         run: |
-          bash phreox-frontend/scripts/platform-package-macos.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
-            --binary phreox-frontend/target/release/phreox --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
-            --presence phreox-presence/target/release/phreox-presence --games phreox-presence/detectable.json \
-            --icon phreox-frontend/crates/phreox-style/assets/phreox-logo-transparent.png --out "$RUNNER_TEMP/mac"
+          (cd phreox-frontend && npm ci)
+          (cd phreox-app && npm install --no-audit --no-fund)
+      - name: Package
+        working-directory: phreox/phreox-app
+        run: npm run package:desktop
       - name: Into the release
         run: |
-          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/mac/phreox-*.dmg
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.dmg
           "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 
