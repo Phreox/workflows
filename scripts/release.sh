@@ -14,7 +14,7 @@
 # GH_TOKEN needs write access to the contents of the releases repository (RELEASES_REPO, default Phreox/releases).
 set -euo pipefail
 
-: "${GH_TOKEN:?GH_TOKEN (write access to the releases repository) is needed}"
+: "${GH_TOKEN:?The secret RELEASES_TOKEN (write access to the contents of Phreox/releases) is not set in this repository: add it under Settings > Secrets and variables > Actions}"
 
 repo="${RELEASES_REPO:-Phreox/releases}"
 api() { gh api -H "Accept: application/vnd.github+json" "$@"; }
