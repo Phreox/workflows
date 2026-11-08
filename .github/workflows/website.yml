@@ -69,6 +69,8 @@ jobs:
         with:
           sha: ${{ steps.what.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
+          # The website imports the Markdown component of the React app, which is on this branch since the frontend repository is the Rust app.
+          frontend-branch: react-legacy
       - id: draft
         shell: bash
         run: |
