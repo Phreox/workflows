@@ -145,18 +145,32 @@ jobs:
         working-directory: phreox
     steps:
       - uses: actions/checkout@v4
+      # The pointer of the frontend shows the Rust app, which is what is built here.
       - uses: ./.github/actions/source
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-          frontend-branch: react-legacy
       - uses: ./.github/actions/java
         with:
           cache: "true"
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            phreox/phreox-frontend
+            phreox/phreox-presence
+      - name: System libraries and appimagetool
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential cmake nasm pkg-config libfontconfig1-dev libfreetype-dev libasound2-dev \
+            libxkbcommon-dev libwayland-dev libdbus-1-dev libgtk-3-dev libayatana-appindicator3-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev \
+            libdav1d-dev squashfs-tools desktop-file-utils
+          # A pinned release of appimagetool (the SHA-256 is the digest GitHub lists for release 1.9.1). The runner has no FUSE, so the tool unpacks itself.
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/appimagetool.AppImage" https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage
+          echo "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0  $RUNNER_TEMP/appimagetool.AppImage" | sha256sum -c -
+          chmod +x "$RUNNER_TEMP/appimagetool.AppImage"
+          printf '#!/bin/sh\nexec "%s" --appimage-extract-and-run "$@"\n' "$RUNNER_TEMP/appimagetool.AppImage" | sudo tee /usr/local/bin/appimagetool > /dev/null
+          sudo chmod +x /usr/local/bin/appimagetool
       - name: libopus and PortAudio of every platform
         continue-on-error: true
         run: |
@@ -170,22 +184,28 @@ jobs:
       - name: Backend jar and the Java runtime that ships with the app
         run: |
           mvn -B -q -pl phreox-backend -am -DskipTests package
-          node phreox-app/scripts/make-runtime.mjs
-      - name: Make this checkout the app of the channel
-        working-directory: phreox/phreox-app
+          bash phreox-frontend/scripts/platform-make-runtime.sh phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/jre"
+      - name: The presence helper
+        run: cargo build --release --manifest-path phreox-presence/Cargo.toml
+      - name: The app of the channel
+        working-directory: phreox/phreox-frontend
         env:
-          PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
-        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
-      - name: Install
-        run: |
-          (cd phreox-frontend && npm ci)
-          (cd phreox-app && npm install --no-audit --no-fund)
+          # The channel, the version and the token are compiled into the app (crates/phreox-platform/build.rs).
+          PHREOX_CHANNEL: ${ needs.plan.outputs.channel }
+          PHREOX_VERSION: ${ needs.plan.outputs.version }
+          PHREOX_UPDATE_TOKEN: ${ secrets.UPDATE_TOKEN }
+        run: cargo build --release -p phreox-app
       - name: Package
-        working-directory: phreox/phreox-app
-        run: npm run package:desktop
+        run: |
+          # libdav1d (the AV1 decoder) is not on every desktop: it goes into the AppImage.
+          export EXTRA_LIBS="$(ldd phreox-frontend/target/release/phreox | awk '/libdav1d/ {print $3}')"
+          bash phreox-frontend/scripts/platform-package-linux.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
+            --binary phreox-frontend/target/release/phreox --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
+            --presence phreox-presence/target/release/phreox-presence --games phreox-presence/detectable.json \
+            --icon phreox-frontend/crates/phreox-platform/assets/phreox-128.png --out "$RUNNER_TEMP/linux"
       - name: Into the release
         run: |
-          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.AppImage
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/linux/phreox-*.AppImage
           "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 

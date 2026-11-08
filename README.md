@@ -29,6 +29,12 @@ Nothing built is kept in a run. The release in `Phreox/releases` is made as a **
 writes `SHA256SUMS` from the digests GitHub made, replaces the previous dev release and publishes the draft. What a job needs of another (the libopus and PortAudio builds) is a file of the draft too
 (`natives-*.tar.gz`) and is removed before publishing. A run that fails or is cancelled throws its draft away.
 
+## The desktop app
+
+The Linux app (`desktop`) is the Rust app: `phreox-frontend` is built with `cargo` and packaged by `phreox-frontend/scripts/platform-package-linux.sh` into an AppImage, no npm. The Windows and macOS apps
+(`desktop-win`, `desktop-mac`) are still the Electron app, built from the branch `react-legacy` of the frontend repository, until the Rust builds for them exist (what is missing: the AV1 decoder `dav1d` without a system package, a checked run of the NSIS
+installer with the WinShell plugin, and a run on macOS; `phreox-frontend/scripts/platform-package-windows.sh` and `-macos.sh` are written). The web version, the Android app and the website are the React app and also come from `react-legacy`.
+
 ## Secrets (of this repository)
 
 | Secret | For |
