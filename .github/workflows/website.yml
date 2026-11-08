@@ -1,0 +1,91 @@
+# Releases the website (phreox.com) on its own: it has its own tags and does not wait for, or trigger, a release of the apps.
+#
+#   tag website-1.2.3   ->  release "Phreox Website 1.2.3" in Phreox/releases with phreox-website-1.2.3.tar.gz and SHA256SUMS
+#
+# Phreox/phreox tells this repository about the tag (event `phreox-website`), this repository has Phreox/phreox as a submodule and builds that commit. As in publish.yml
+# nothing is kept as an artifact: the release is a draft, the files go straight into it, and it is published at the end (and thrown away if the build fails).
+#
+# The egg "Phreox Website" (pterodactyl/egg-phreox-website.json) takes the newest website-X.Y.Z at installation and at every start. The tag does not look like a version of an
+# app, so the updaters of the apps and the service never see it as theirs.
+#
+# Secrets: RELEASES_TOKEN (write access to the contents of Phreox/releases), SUBMODULES_TOKEN (read access to Phreox/phreox and its submodules; the website renders the news
+# with the Markdown component of phreox-frontend, so that submodule is needed).
+name: website
+
+on:
+  repository_dispatch:
+    types: [phreox-website]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the prefix, e.g. 1.2.3 (the release is tagged website-1.2.3)"
+        required: true
+      ref:
+        description: "Branch, tag or commit of Phreox/phreox to build"
+        required: true
+        default: master
+
+permissions:
+  contents: read
+
+concurrency:
+  group: website
+  cancel-in-progress: false
+
+env:
+  RELEASES_REPO: Phreox/releases
+  RELEASE: ${{ github.workspace }}/scripts/release.sh
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - id: what
+        shell: bash
+        env:
+          TAG: ${{ github.event.client_payload.ref || '' }}
+          SHA: ${{ github.event.client_payload.sha || '' }}
+          INPUT_VERSION: ${{ inputs.version }}
+          INPUT_REF: ${{ inputs.ref }}
+          LOOKUP: ${{ secrets.SUBMODULES_TOKEN }}
+        run: |
+          if [[ -n "$TAG" ]]; then version="${TAG#website-}"; else version="$INPUT_VERSION"; fi
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::'$version' is not a version like 1.2.3"; exit 1; fi
+          [[ -n "$SHA" ]] || SHA="$(GH_TOKEN="$LOOKUP" gh api "repos/Phreox/phreox/commits/${INPUT_REF}" --jq .sha)"
+          { echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ steps.what.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - id: draft
+        shell: bash
+        run: |
+          id="$("$RELEASE" draft "website-${{ steps.what.outputs.version }}" "Phreox Website ${{ steps.what.outputs.version }}" false \
+            "The website of phreox.com. Built from https://github.com/Phreox/phreox/commit/${{ steps.what.outputs.sha }}")"
+          echo "id=$id" >> "$GITHUB_OUTPUT"
+      - name: Build
+        shell: bash
+        working-directory: phreox
+        run: |
+          (cd phreox-website && npm ci && npm run build)
+          mkdir -p "$RUNNER_TEMP/pack" "$RUNNER_TEMP/out"
+          cp -r phreox-website/dist "$RUNNER_TEMP/pack/site"
+          cp phreox-website/server/server.mjs "$RUNNER_TEMP/pack/server.mjs"
+          tar -czf "$RUNNER_TEMP/out/phreox-website-${{ steps.what.outputs.version }}.tar.gz" -C "$RUNNER_TEMP/pack" .
+          (cd "$RUNNER_TEMP/out" && sha256sum phreox-website-* > SHA256SUMS)
+      - name: Into the release, and publish it
+        shell: bash
+        run: |
+          "$RELEASE" upload "${{ steps.draft.outputs.id }}" "$RUNNER_TEMP"/out/*
+          # Not "latest": that place belongs to the apps.
+          "$RELEASE" publish "${{ steps.draft.outputs.id }}" false false
+      - name: Throw the draft away when something failed
+        if: failure() && steps.draft.outputs.id != ''
+        shell: bash
+        run: '"$RELEASE" discard "${{ steps.draft.outputs.id }}"'

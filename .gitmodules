@@ -1,0 +1,3 @@
+[submodule "phreox"]
+	path = phreox
+	url = https://github.com/Phreox/phreox.git

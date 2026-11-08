@@ -1,0 +1,528 @@
+# Builds every channel of the apps and puts them into one release of https://github.com/Phreox/releases.
+#
+#   push of the main branch   ->  pre-release 1.0.0-dev.<8 chars of the commit>, channel dev; only one dev release exists at a time
+#   tag 1.2.3                 ->  normal release, channel release (the stable app)
+#   tag 1.2.3-beta.N / -pre.N / -rc.N       ->  pre-release, channel beta
+#   tag 1.2.3-alpha.N / -pre.alpha.N        ->  pre-release, channel alpha
+#
+# The push happens in Phreox/phreox, whose workflow `dispatch` tells this repository (repository_dispatch, event `phreox`); this repository has Phreox/phreox as a submodule
+# (./phreox) and builds the commit it was told about. Run by hand (Actions > publish > Run workflow) it builds the branch or tag you name.
+#
+# NO ARTIFACTS: nothing built is kept in the run. The release is made as a DRAFT first, every job puts its files straight into it (scripts/release.sh), and a last job
+# publishes the draft. What one job needs of another (the libopus and PortAudio builds) is a file of the draft too and is removed before the draft is published.
+# A run that fails or is cancelled throws its draft away.
+#
+# Each channel is an app of its own (own id, name and data). Release, beta and alpha talk to the real services so their accounts are the same; dev has services of its own.
+# See phreox/phreox-app/channels.json and phreox/docs/RELEASES.md.
+#
+# The service, the backend and the web version are in the release too, as phreox-service-*.jar, phreox-backend-*.jar and phreox-web-*.tar.gz: the Pterodactyl eggs install and
+# update themselves from them. The Windows installer and the macOS image are slow to get a runner; the release waits for them, but a failure of theirs does not hold it back.
+#
+# Secrets of this repository: RELEASES_TOKEN (write access to the contents of Phreox/releases), SUBMODULES_TOKEN (read access to Phreox/phreox and its submodules),
+# UPDATE_TOKEN (the token the apps use to ask for updates), ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS (the key every Android build is signed with).
+name: publish
+
+on:
+  repository_dispatch:
+    types: [phreox]
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch or tag of Phreox/phreox to build (a tag like 1.2.3 makes a release, a branch a dev release)"
+        required: true
+        default: master
+
+permissions:
+  contents: read
+
+# A newer push to the branch makes an older run pointless: it would publish a dev release that is replaced at once.
+concurrency:
+  group: publish-${{ github.event.client_payload.ref || inputs.ref }}
+  cancel-in-progress: ${{ (github.event.client_payload.ref_type || 'branch') == 'branch' }}
+
+env:
+  RELEASES_REPO: Phreox/releases
+  RELEASE: ${{ github.workspace }}/scripts/release.sh
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    outputs:
+      sha: ${{ steps.what.outputs.sha }}
+      tag: ${{ steps.info.outputs.tag }}
+      version: ${{ steps.info.outputs.version }}
+      channel: ${{ steps.info.outputs.channel }}
+      prerelease: ${{ steps.info.outputs.prerelease }}
+      release: ${{ steps.draft.outputs.id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      # What is built: the push that was told about, or the branch or tag that was named by hand.
+      - id: what
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
+          REF: ${{ github.event.client_payload.ref || inputs.ref }}
+          REF_TYPE: ${{ github.event.client_payload.ref_type || '' }}
+          PAYLOAD_SHA: ${{ github.event.client_payload.sha || '' }}
+        run: |
+          ref="$REF"
+          type="$REF_TYPE"
+          sha="$PAYLOAD_SHA"
+          [[ -n "$sha" ]] || sha="$(gh api "repos/Phreox/phreox/commits/$ref" --jq .sha)"
+          [[ -n "$type" ]] || { [[ "$ref" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] && type=tag || type=branch; }
+          { echo "ref=$ref"; echo "type=$type"; echo "sha=$sha"; } | tee -a "$GITHUB_OUTPUT"
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ steps.what.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - id: info
+        shell: bash
+        env:
+          REF: ${{ steps.what.outputs.ref }}
+        run: |
+          if [[ "${{ steps.what.outputs.type }}" == tag ]]; then
+            node phreox/phreox-app/scripts/release-info.mjs "$REF" | tee -a "$GITHUB_OUTPUT"
+          else
+            short="${{ steps.what.outputs.sha }}"
+            short="${short:0:8}"
+            {
+              echo "tag=1.0.0-dev.$short"
+              echo "version=1.0.0-dev.$short"
+              echo "channel=dev"
+              echo "prerelease=true"
+            } | tee -a "$GITHUB_OUTPUT"
+          fi
+      # The draft the whole run puts its files into.
+      - id: draft
+        shell: bash
+        run: |
+          notes="Channel: ${{ steps.info.outputs.channel }}
+          Built from https://github.com/Phreox/phreox/commit/${{ steps.what.outputs.sha }}"
+          id="$("$RELEASE" draft "${{ steps.info.outputs.tag }}" "Phreox ${{ steps.info.outputs.tag }}" "${{ steps.info.outputs.prerelease }}" "$notes")"
+          echo "id=$id" | tee -a "$GITHUB_OUTPUT"
+
+  # libopus and PortAudio for every platform: without them the sound of a voice channel does not work on Windows and macOS. Their files go into the draft for the jobs that
+  # build the backend, and are taken out again before it is published.
+  natives:
+    needs: plan
+    uses: ./.github/workflows/natives.yml
+    with:
+      sha: ${{ needs.plan.outputs.sha }}
+      release: ${{ needs.plan.outputs.release }}
+    secrets: inherit
+
+  desktop:
+    needs: [plan, natives]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ needs.plan.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: phreox/pom.xml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: libopus and PortAudio of every platform
+        continue-on-error: true
+        run: |
+          mkdir -p phreox-backend/src/main/resources/natives
+          for name in $("$RELEASE" names "${{ needs.plan.outputs.release }}" 'natives-*.tar.gz'); do
+            "$RELEASE" download "${{ needs.plan.outputs.release }}" "$name" "$RUNNER_TEMP/$name"
+            tar -xzf "$RUNNER_TEMP/$name" -C phreox-backend/src/main/resources/natives
+          done
+      - name: Backend jar and the Java runtime that ships with the app
+        run: |
+          mvn -B -q -pl phreox-backend -am -DskipTests package
+          node phreox-app/scripts/make-runtime.mjs
+      - name: Make this checkout the app of the channel
+        working-directory: phreox/phreox-app
+        env:
+          PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
+      - name: Install
+        run: |
+          (cd phreox-frontend && npm ci)
+          (cd phreox-app && npm install --no-audit --no-fund)
+      - name: Package
+        working-directory: phreox/phreox-app
+        run: npm run package:desktop
+      - name: Into the release
+        run: |
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.AppImage
+
+
+  android:
+    needs: plan
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ needs.plan.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Make this checkout the app of the channel
+        working-directory: phreox/phreox-app
+        env:
+          PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
+      - name: Build the web part
+        run: |
+          (cd phreox-frontend && npm ci)
+          (cd phreox-app && npm install --no-audit --no-fund && npm run sync:android)
+      - name: Signing key
+        id: key
+        run: |
+          if [[ -n "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" ]]; then
+            echo "${{ secrets.ANDROID_KEYSTORE_BASE64 }}" | base64 -d > "$RUNNER_TEMP/phreox.jks"
+          else
+            # Without the shared key the app installs, but cannot be updated over an older build: say so.
+            echo "::warning::ANDROID_KEYSTORE_BASE64 is not set, the APK is signed with a throwaway key and cannot update an installed app"
+            keytool -genkeypair -keystore "$RUNNER_TEMP/phreox.jks" -storepass throwaway -keypass throwaway -alias phreox -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Phreox CI"
+          fi
+      - name: APK
+        working-directory: phreox/phreox-app/android
+        env:
+          STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'throwaway' }}
+          KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS || 'phreox' }}
+        run: |
+          # The version code grows with every build, so a newer build can always be installed over an older one. The apps were built by the workflow of
+          # Phreox/phreox before this repository took over, whose run numbers were below 100000: the numbers of this one start above them.
+          ./gradlew --no-daemon assembleRelease \
+            -PphreoxApplicationId="$PHREOX_APP_ID" -PphreoxAppName="$PHREOX_APP_NAME" -PphreoxScheme="$PHREOX_SCHEME" \
+            -PphreoxVersionName="${{ needs.plan.outputs.version }}" -PphreoxVersionCode="$((100000 + ${{ github.run_number }}))" \
+            -PphreoxKeystore="$RUNNER_TEMP/phreox.jks" -PphreoxKeystorePassword="$STORE_PASSWORD" -PphreoxKeyAlias="$KEY_ALIAS"
+          mv app/build/outputs/apk/release/app-release.apk \
+            "phreox-${{ needs.plan.outputs.channel }}-${{ needs.plan.outputs.version }}-android-universal.apk"
+      - name: Into the release
+        run: |
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/android/phreox-*.apk
+
+
+  service:
+    needs: plan
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ needs.plan.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: phreox/pom.xml
+      - name: phreox-service.jar
+        run: |
+          mvn -B -q -pl phreox-service -am -DskipTests package
+          # The Pterodactyl egg and its supervisor take this file: phreox-service-<channel>-<version>.jar
+          cp phreox-service/target/phreox-service.jar "$RUNNER_TEMP/phreox-service-${{ needs.plan.outputs.channel }}-${{ needs.plan.outputs.version }}.jar"
+      - name: Into the release
+        run: |
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/phreox-service-*.jar
+
+
+  backend:
+    needs: [plan, natives]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ needs.plan.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: phreox/pom.xml
+      - name: libopus and PortAudio of every platform
+        continue-on-error: true
+        run: |
+          mkdir -p phreox-backend/src/main/resources/natives
+          for name in $("$RELEASE" names "${{ needs.plan.outputs.release }}" 'natives-*.tar.gz'); do
+            "$RELEASE" download "${{ needs.plan.outputs.release }}" "$name" "$RUNNER_TEMP/$name"
+            tar -xzf "$RUNNER_TEMP/$name" -C phreox-backend/src/main/resources/natives
+          done
+      - name: phreox-backend.jar
+        run: |
+          mvn -B -q -pl phreox-backend -am -DskipTests package
+          # The Pterodactyl egg "Phreox Backend" takes this file: phreox-backend-<channel>-<version>.jar
+          cp phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/phreox-backend-${{ needs.plan.outputs.channel }}-${{ needs.plan.outputs.version }}.jar"
+      - name: Into the release
+        run: |
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/phreox-backend-*.jar
+
+
+  space:
+    needs: plan
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ needs.plan.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: phreox/pom.xml
+      - name: phreox-space.jar
+        run: |
+          mvn -B -q -pl phreox-space -am -DskipTests package
+          cp phreox-space/target/phreox-space.jar "$RUNNER_TEMP/phreox-space-${{ needs.plan.outputs.channel }}-${{ needs.plan.outputs.version }}.jar"
+      - name: Into the release
+        run: |
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/phreox-space-*.jar
+
+
+  web:
+    needs: plan
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ needs.plan.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Build
+        env:
+          VITE_PHREOX_WEB: "1"
+          VITE_PHREOX_CHANNEL: ${{ needs.plan.outputs.channel }}
+          VITE_PHREOX_VERSION: ${{ needs.plan.outputs.version }}
+        run: |
+          (cd phreox-frontend && npm ci && npx vite build)
+          mkdir -p "$RUNNER_TEMP/pack"
+          cp -r phreox-frontend/dist "$RUNNER_TEMP/pack/site"
+          cp pterodactyl/web-server.mjs "$RUNNER_TEMP/pack/server.mjs"
+          tar -czf "$RUNNER_TEMP/phreox-web-${{ needs.plan.outputs.channel }}-${{ needs.plan.outputs.version }}.tar.gz" -C "$RUNNER_TEMP/pack" .
+      - name: Into the release
+        run: |
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/phreox-web-*.tar.gz
+
+
+  # The installers wait for a runner a long time: the release waits for them, but their failure does not hold it back.
+  desktop-win:
+    needs: [plan, natives]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: windows-latest
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ needs.plan.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: phreox/pom.xml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: libopus and PortAudio of every platform
+        continue-on-error: true
+        run: |
+          mkdir -p phreox-backend/src/main/resources/natives
+          for name in $("$RELEASE" names "${{ needs.plan.outputs.release }}" 'natives-*.tar.gz'); do
+            "$RELEASE" download "${{ needs.plan.outputs.release }}" "$name" "$RUNNER_TEMP/$name"
+            tar -xzf "$RUNNER_TEMP/$name" -C phreox-backend/src/main/resources/natives
+          done
+      - name: Backend jar and the Java runtime that ships with the app
+        run: |
+          mvn -B -q -pl phreox-backend -am -DskipTests package
+          node phreox-app/scripts/make-runtime.mjs
+      - name: Make this checkout the app of the channel
+        working-directory: phreox/phreox-app
+        env:
+          PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
+      - name: Install
+        run: |
+          (cd phreox-frontend && npm ci)
+          (cd phreox-app && npm install --no-audit --no-fund)
+      - name: Package
+        working-directory: phreox/phreox-app
+        run: npm run package:desktop
+      - name: Into the release
+        run: |
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.exe
+
+
+  desktop-mac:
+    needs: [plan, natives]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    runs-on: macos-26
+    timeout-minutes: 40
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ needs.plan.outputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: phreox/pom.xml
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: dtolnay/rust-toolchain@stable
+      - name: libopus and PortAudio of every platform
+        continue-on-error: true
+        run: |
+          mkdir -p phreox-backend/src/main/resources/natives
+          for name in $("$RELEASE" names "${{ needs.plan.outputs.release }}" 'natives-*.tar.gz'); do
+            "$RELEASE" download "${{ needs.plan.outputs.release }}" "$name" "$RUNNER_TEMP/$name"
+            tar -xzf "$RUNNER_TEMP/$name" -C phreox-backend/src/main/resources/natives
+          done
+      - name: Backend jar and the Java runtime that ships with the app
+        run: |
+          mvn -B -q -pl phreox-backend -am -DskipTests package
+          node phreox-app/scripts/make-runtime.mjs
+      - name: Make this checkout the app of the channel
+        working-directory: phreox/phreox-app
+        env:
+          PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
+        run: node scripts/prepare-channel.mjs "${{ needs.plan.outputs.channel }}" "${{ needs.plan.outputs.version }}" >> "$GITHUB_ENV"
+      - name: Install
+        run: |
+          (cd phreox-frontend && npm ci)
+          (cd phreox-app && npm install --no-audit --no-fund)
+      - name: Package
+        working-directory: phreox/phreox-app
+        run: npm run package:desktop
+      - name: Into the release
+        run: |
+          "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.dmg
+
+
+  # The draft becomes the release. Only here are its files looked at as a whole: the helpers of the build are taken out, the checksums are written from the digests that
+  # GitHub made of the files, and a dev release replaces the one before it.
+  publish:
+    needs: [plan, desktop, android, service, backend, space, web, desktop-win, desktop-mac]
+    # The installers of Windows and macOS may fail, the rest may not.
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.desktop.result == 'success' && needs.android.result == 'success' && needs.service.result == 'success' && needs.backend.result == 'success' && needs.space.result == 'success' && needs.web.result == 'success' }}
+    runs-on: ubuntu-latest
+    # A dev release replaces the previous one: only the newest commit may publish, an older run is cancelled by a newer one.
+    concurrency:
+      group: publish-release-${{ needs.plan.outputs.channel == 'dev' && 'dev' || needs.plan.outputs.tag }}
+      cancel-in-progress: ${{ needs.plan.outputs.channel == 'dev' }}
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      ID: ${{ needs.plan.outputs.release }}
+      TAG: ${{ needs.plan.outputs.tag }}
+      CHANNEL: ${{ needs.plan.outputs.channel }}
+      PRERELEASE: ${{ needs.plan.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Take the helpers of the build out
+        run: scripts/release.sh delete "$ID" 'natives-*'
+      - name: Checksums
+        run: |
+          scripts/release.sh checksums "$ID" "$RUNNER_TEMP/SHA256SUMS"
+          scripts/release.sh upload "$ID" "$RUNNER_TEMP/SHA256SUMS"
+          cat "$RUNNER_TEMP/SHA256SUMS"
+      - name: Only one dev release at a time
+        if: needs.plan.outputs.channel == 'dev'
+        run: |
+          gh release list -R "$RELEASES_REPO" --limit 200 --json tagName --jq '.[].tagName' \
+            | grep -E -- '-dev\.[0-9a-f]{8}$' | grep -vx -- "$TAG" \
+            | while read -r old; do gh release delete "$old" -R "$RELEASES_REPO" --cleanup-tag --yes; done
+      - name: Publish
+        run: |
+          if [[ "$PRERELEASE" == "true" ]]; then latest=false; else latest=true; fi
+          scripts/release.sh publish "$ID" "$PRERELEASE" "$latest"
+
+  # A run that did not get to publish leaves nothing behind.
+  discard:
+    needs: [plan, publish]
+    if: ${{ always() && needs.plan.result == 'success' && needs.publish.result != 'success' }}
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+      - run: scripts/release.sh discard "${{ needs.plan.outputs.release }}"

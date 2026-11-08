@@ -1,0 +1,152 @@
+# libopus 1.6.1 (our own build with DRED, OSCE and QEXT) and PortAudio 19.7 for every platform, for the backend of the apps (phreox/phreox-backend/natives/build.sh and
+# native/build-windows.sh). Windows and macOS have neither library, so without them the voice engine says that no voice chat is possible there.
+#
+# No artifacts: every build is a file of the draft release (natives-<os>-<arch>.tar.gz); the jobs that build the backend take them from there, and the job that publishes
+# the release removes them again.
+#
+#   - Linux and macOS are built on their own runners (macOS x64 is cross built on an arm64 machine).
+#   - Windows is cross built on Linux with MinGW-w64, and loaded once on a Windows runner with the real backend code.
+#
+# Every build is checked by the probe test of the backend (OpusNativeTest with PHREOX_REQUIRE_NATIVES=1). A platform that fails is left out and says so in its job; it does not
+# stop the release (continue-on-error): the jar just goes without the natives of that platform.
+name: natives
+
+on:
+  workflow_call:
+    inputs:
+      sha:
+        description: The commit of Phreox/phreox to build.
+        required: true
+        type: string
+      release:
+        description: The id of the draft release the files go into.
+        required: true
+        type: string
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: The commit of Phreox/phreox to build (a full commit id).
+        required: true
+      release:
+        description: The id of a draft release in Phreox/releases that takes the files (make one with scripts/release.sh draft).
+        required: true
+
+permissions:
+  contents: read
+
+env:
+  RELEASES_REPO: Phreox/releases
+  RELEASE: ${{ github.workspace }}/scripts/release.sh
+
+jobs:
+  unix:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-latest, name: linux, arch: x64 }
+          - { os: ubuntu-24.04-arm, name: linux, arch: arm64 }
+          - { os: macos-26, name: macos, arch: arm64 }
+          - { os: macos-26, name: macos, arch: x64 }
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
+    continue-on-error: true
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ inputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - name: ALSA headers
+        if: matrix.name == 'linux'
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends libasound2-dev cmake
+      - name: Build libopus and PortAudio
+        run: bash phreox-backend/natives/build.sh "${{ matrix.name }}" "${{ matrix.arch }}"
+      # macOS x64 is built on an arm64 machine and cannot run here.
+      - uses: actions/setup-java@v4
+        if: matrix.name != 'macos' || matrix.arch == 'arm64'
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: phreox/pom.xml
+      - name: Gate, the built libopus loads and passes the probe
+        if: matrix.name != 'macos' || matrix.arch == 'arm64'
+        env:
+          PHREOX_REQUIRE_NATIVES: "1"
+        run: mvn -B -q -pl phreox-backend -am test -Dtest=OpusNativeTest -Dsurefire.failIfNoSpecifiedTests=false
+      - name: Into the release
+        run: |
+          tar -czf "$RUNNER_TEMP/natives-${{ matrix.name }}-${{ matrix.arch }}.tar.gz" -C phreox-backend/src/main/resources/natives "${{ matrix.name }}-${{ matrix.arch }}"
+          "$RELEASE" upload "${{ inputs.release }}" "$RUNNER_TEMP/natives-${{ matrix.name }}-${{ matrix.arch }}.tar.gz"
+
+  windows:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    continue-on-error: true
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ inputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - name: MinGW-w64
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends mingw-w64 cmake ninja-build
+      # The script checks that the DLLs import system DLLs only and export what the backend binds; no Wine here, the Windows job below really loads them.
+      - name: Build opus.dll and portaudio.dll
+        env:
+          SKIP_WINE: "1"
+          # The MinGW of Ubuntu uses the old C runtime (msvcrt.dll, which every Windows has) instead of the Universal CRT the script is made for.
+          ALLOWED_DLLS: '^(KERNEL32|USER32|WINMM|ole32|msvcrt|api-ms-win-crt-[a-z0-9-]+)\.dll$'
+        run: bash phreox-backend/native/build-windows.sh
+      - name: Into the release
+        run: |
+          tar -czf "$RUNNER_TEMP/natives-windows-x64.tar.gz" -C phreox-backend/src/main/resources/natives windows-x64
+          "$RELEASE" upload "${{ inputs.release }}" "$RUNNER_TEMP/natives-windows-x64.tar.gz"
+
+  # Loads the Windows build the way the app does (NativeLoader, foreign function API) on a real Windows machine. It does not hold the release back: if it fails, the job is red
+  # and the DLLs are still in the jar, which is no worse than having no sound library there at all.
+  windows-check:
+    needs: windows
+    runs-on: windows-latest
+    timeout-minutes: 30
+    continue-on-error: true
+    env:
+      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: phreox
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/source
+        with:
+          sha: ${{ inputs.sha }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+      - name: The Windows build from the release
+        run: |
+          mkdir -p phreox-backend/src/main/resources/natives
+          "$RELEASE" download "${{ inputs.release }}" natives-windows-x64.tar.gz "$RUNNER_TEMP/natives-windows-x64.tar.gz"
+          tar -xzf "$RUNNER_TEMP/natives-windows-x64.tar.gz" -C phreox-backend/src/main/resources/natives
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "25"
+          cache: maven
+          cache-dependency-path: phreox/pom.xml
+      - name: Gate, opus.dll loads and passes the probe
+        env:
+          PHREOX_REQUIRE_NATIVES: "1"
+        run: mvn -B -q -pl phreox-backend -am test -Dtest=OpusNativeTest -Dsurefire.failIfNoSpecifiedTests=false

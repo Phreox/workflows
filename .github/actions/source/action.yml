@@ -1,0 +1,26 @@
+name: source
+description: >
+  Puts the commit of Phreox/phreox that is built (and all its submodules) into ./phreox. The repository of the workflows has Phreox/phreox as a submodule of its own, but
+  the commit that is built is the one that was pushed, not the one the pointer shows, so the submodule is moved to it.
+inputs:
+  sha:
+    description: The commit of Phreox/phreox.
+    required: true
+  token:
+    description: A token that can read Phreox/phreox and its submodules (they are private).
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        SHA: ${{ inputs.sha }}
+        TOKEN: ${{ inputs.token }}
+      run: |
+        # Every repository of Phreox is read with the token, the submodules of the submodules too.
+        git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
+        git submodule update --init phreox
+        git -C phreox fetch --no-tags origin "$SHA"
+        git -C phreox checkout --force "$SHA"
+        git -C phreox submodule update --init --recursive
+        git -C phreox log --oneline -1
