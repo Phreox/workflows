@@ -8,15 +8,17 @@
 # The push happens in Phreox/phreox, whose workflow `dispatch` starts this one (workflow_dispatch, with the branch or tag and the commit); this repository has Phreox/phreox as a submodule
 # (./phreox) and builds the commit it was told about. Run by hand (Actions > publish > Run workflow) it builds the branch or tag you name.
 #
-# NO ARTIFACTS: nothing built is kept in the run. The release is made as a DRAFT first, every job puts its files straight into it (scripts/release.sh), and a last job
-# publishes the draft. What one job needs of another (the libopus and PortAudio builds) is a file of the draft too and is removed before the draft is published.
-# A run that fails or is cancelled throws its draft away.
+# NO ARTIFACTS: nothing built is kept in the run. The release is made as a DRAFT first and every job puts its files straight into it (scripts/release.sh). The draft is
+# published as soon as the quick parts are in it (service, backend, space node, web); the Android app and the desktop apps (AppImage, exe, dmg) are added to the release one after
+# the other when they are done, and SHA256SUMS is written again each time. The apps look at the release for the file of their system, so one that is not there yet is simply not offered yet.
+# What one job needs of another (the libopus and PortAudio builds) is in a second draft that nobody sees and that is thrown away at the end, so the release has nothing but its files.
+# A run that fails or is cancelled throws its drafts away.
 #
 # Each channel is an app of its own (own id, name and data). Release, beta and alpha talk to the real services so their accounts are the same; dev has services of its own.
 # See phreox/phreox-app/channels.json and phreox/docs/RELEASES.md.
 #
 # The service, the backend and the web version are in the release too, as phreox-service-*.jar, phreox-backend-*.jar and phreox-web-*.tar.gz: the Pterodactyl eggs install and
-# update themselves from them. The Windows installer and the macOS image are slow to get a runner; the release waits for them, but a failure of theirs does not hold it back.
+# update themselves from them. A failure of the Android or desktop build does not hold the release back, it only misses the file.
 #
 # Secrets of this repository: RELEASES_TOKEN (write access to the contents of Phreox/releases), SUBMODULES_TOKEN (read access to Phreox/phreox and its submodules),
 # UPDATE_TOKEN (the token the apps use to ask for updates), ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS (the key every Android build is signed with).
@@ -62,6 +64,7 @@ jobs:
       channel: ${{ steps.info.outputs.channel }}
       prerelease: ${{ steps.info.outputs.prerelease }}
       release: ${{ steps.draft.outputs.id }}
+      helpers: ${{ steps.draft.outputs.helpers }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -111,6 +114,9 @@ jobs:
           Built from https://github.com/Phreox/phreox/commit/${{ steps.what.outputs.sha }}"
           id="$("$RELEASE" draft "${{ steps.info.outputs.tag }}" "Phreox ${{ steps.info.outputs.tag }}" "${{ steps.info.outputs.prerelease }}" "$notes")"
           echo "id=$id" | tee -a "$GITHUB_OUTPUT"
+          # A second draft that never becomes a release: the builds of libopus and PortAudio go in here for the jobs that need them.
+          helpers="$("$RELEASE" draft "helpers-${{ github.run_id }}" "Build helpers of the run ${{ github.run_id }} (thrown away)" true "Not a release.")"
+          echo "helpers=$helpers" | tee -a "$GITHUB_OUTPUT"
 
   # libopus and PortAudio for every platform: without them the sound of a voice channel does not work on Windows and macOS. Their files go into the draft for the jobs that
   # build the backend, and are taken out again before it is published.
@@ -119,7 +125,7 @@ jobs:
     uses: ./.github/workflows/natives.yml
     with:
       sha: ${{ needs.plan.outputs.sha }}
-      release: ${{ needs.plan.outputs.release }}
+      release: ${{ needs.plan.outputs.helpers }}
     secrets: inherit
 
   desktop:
@@ -152,9 +158,11 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p phreox-backend/src/main/resources/natives
-          for name in $("$RELEASE" names "${{ needs.plan.outputs.release }}" 'natives-*.tar.gz'); do
-            "$RELEASE" download "${{ needs.plan.outputs.release }}" "$name" "$RUNNER_TEMP/$name"
-            tar -xzf "$RUNNER_TEMP/$name" -C phreox-backend/src/main/resources/natives
+          for name in $("$RELEASE" names "${{ needs.plan.outputs.helpers }}" 'natives-*.tar.gz'); do
+            # A relative name: tar of Windows takes "D:\a\_temp\file" for a file on a computer called D.
+            "$RELEASE" download "${{ needs.plan.outputs.helpers }}" "$name" "$name"
+            tar -xzf "$name" -C phreox-backend/src/main/resources/natives
+            rm "$name"
           done
       - name: Backend jar and the Java runtime that ships with the app
         run: |
@@ -175,6 +183,7 @@ jobs:
       - name: Into the release
         run: |
           "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.AppImage
+          "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 
   android:
@@ -235,6 +244,7 @@ jobs:
       - name: Into the release
         run: |
           "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/android/phreox-*.apk
+          "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 
   service:
@@ -294,9 +304,11 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p phreox-backend/src/main/resources/natives
-          for name in $("$RELEASE" names "${{ needs.plan.outputs.release }}" 'natives-*.tar.gz'); do
-            "$RELEASE" download "${{ needs.plan.outputs.release }}" "$name" "$RUNNER_TEMP/$name"
-            tar -xzf "$RUNNER_TEMP/$name" -C phreox-backend/src/main/resources/natives
+          for name in $("$RELEASE" names "${{ needs.plan.outputs.helpers }}" 'natives-*.tar.gz'); do
+            # A relative name: tar of Windows takes "D:\a\_temp\file" for a file on a computer called D.
+            "$RELEASE" download "${{ needs.plan.outputs.helpers }}" "$name" "$name"
+            tar -xzf "$name" -C phreox-backend/src/main/resources/natives
+            rm "$name"
           done
       - name: phreox-backend.jar
         run: |
@@ -404,9 +416,11 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p phreox-backend/src/main/resources/natives
-          for name in $("$RELEASE" names "${{ needs.plan.outputs.release }}" 'natives-*.tar.gz'); do
-            "$RELEASE" download "${{ needs.plan.outputs.release }}" "$name" "$RUNNER_TEMP/$name"
-            tar -xzf "$RUNNER_TEMP/$name" -C phreox-backend/src/main/resources/natives
+          for name in $("$RELEASE" names "${{ needs.plan.outputs.helpers }}" 'natives-*.tar.gz'); do
+            # A relative name: tar of Windows takes "D:\a\_temp\file" for a file on a computer called D.
+            "$RELEASE" download "${{ needs.plan.outputs.helpers }}" "$name" "$name"
+            tar -xzf "$name" -C phreox-backend/src/main/resources/natives
+            rm "$name"
           done
       - name: Backend jar and the Java runtime that ships with the app
         run: |
@@ -427,6 +441,7 @@ jobs:
       - name: Into the release
         run: |
           "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.exe
+          "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 
   desktop-mac:
@@ -460,9 +475,11 @@ jobs:
         continue-on-error: true
         run: |
           mkdir -p phreox-backend/src/main/resources/natives
-          for name in $("$RELEASE" names "${{ needs.plan.outputs.release }}" 'natives-*.tar.gz'); do
-            "$RELEASE" download "${{ needs.plan.outputs.release }}" "$name" "$RUNNER_TEMP/$name"
-            tar -xzf "$RUNNER_TEMP/$name" -C phreox-backend/src/main/resources/natives
+          for name in $("$RELEASE" names "${{ needs.plan.outputs.helpers }}" 'natives-*.tar.gz'); do
+            # A relative name: tar of Windows takes "D:\a\_temp\file" for a file on a computer called D.
+            "$RELEASE" download "${{ needs.plan.outputs.helpers }}" "$name" "$name"
+            tar -xzf "$name" -C phreox-backend/src/main/resources/natives
+            rm "$name"
           done
       - name: Backend jar and the Java runtime that ships with the app
         run: |
@@ -483,14 +500,14 @@ jobs:
       - name: Into the release
         run: |
           "$RELEASE" upload "${{ needs.plan.outputs.release }}" phreox-app/release/phreox-*.dmg
+          "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
 
 
-  # The draft becomes the release. Only here are its files looked at as a whole: the helpers of the build are taken out, the checksums are written from the digests that
-  # GitHub made of the files, and a dev release replaces the one before it.
+  # The draft becomes the release as soon as the quick parts are in it. The checksums are written from the digests that GitHub made of the files, and a dev release replaces
+  # the one before it. The Android and desktop jobs are not waited for: they add their files to the published release.
   publish:
-    needs: [plan, desktop, android, service, backend, space, web, desktop-win, desktop-mac]
-    # The installers of Windows and macOS may fail, the rest may not.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.desktop.result == 'success' && needs.android.result == 'success' && needs.service.result == 'success' && needs.backend.result == 'success' && needs.space.result == 'success' && needs.web.result == 'success' }}
+    needs: [plan, service, backend, space, web]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.service.result == 'success' && needs.backend.result == 'success' && needs.space.result == 'success' && needs.web.result == 'success' }}
     runs-on: ubuntu-latest
     # A dev release replaces the previous one: only the newest commit may publish, an older run is cancelled by a newer one.
     concurrency:
@@ -504,13 +521,8 @@ jobs:
       PRERELEASE: ${{ needs.plan.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v4
-      - name: Take the helpers of the build out
-        run: scripts/release.sh delete "$ID" 'natives-*'
       - name: Checksums
-        run: |
-          scripts/release.sh checksums "$ID" "$RUNNER_TEMP/SHA256SUMS"
-          scripts/release.sh upload "$ID" "$RUNNER_TEMP/SHA256SUMS"
-          cat "$RUNNER_TEMP/SHA256SUMS"
+        run: scripts/release.sh refresh-checksums "$ID"
       - name: Only one dev release at a time
         if: needs.plan.outputs.channel == 'dev'
         run: |
@@ -522,13 +534,18 @@ jobs:
           if [[ "$PRERELEASE" == "true" ]]; then latest=false; else latest=true; fi
           scripts/release.sh publish "$ID" "$PRERELEASE" "$latest"
 
-  # A run that did not get to publish leaves nothing behind.
-  discard:
-    needs: [plan, publish]
-    if: ${{ always() && needs.plan.result == 'success' && needs.publish.result != 'success' }}
+  # The end of the run: the second draft with the helpers goes, and the draft of a release that was not published goes too (when only a part of the apps is missing, the release
+  # stays, as far as it is).
+  finish:
+    needs: [plan, publish, desktop, android, desktop-win, desktop-mac]
+    if: ${{ always() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
     steps:
       - uses: actions/checkout@v4
-      - run: scripts/release.sh discard "${{ needs.plan.outputs.release }}"
+      - name: The helpers are thrown away
+        run: scripts/release.sh discard "${{ needs.plan.outputs.helpers }}"
+      - name: A release that was not published is thrown away
+        if: needs.publish.result != 'success'
+        run: scripts/release.sh discard "${{ needs.plan.outputs.release }}"

@@ -138,8 +138,10 @@ jobs:
       - name: The Windows build from the release
         run: |
           mkdir -p phreox-backend/src/main/resources/natives
-          "$RELEASE" download "${{ inputs.release }}" natives-windows-x64.tar.gz "$RUNNER_TEMP/natives-windows-x64.tar.gz"
-          tar -xzf "$RUNNER_TEMP/natives-windows-x64.tar.gz" -C phreox-backend/src/main/resources/natives
+          # A relative name: tar of Windows takes "D:\a\_temp\file" for a file on a computer called D.
+          "$RELEASE" download "${{ inputs.release }}" natives-windows-x64.tar.gz natives-windows-x64.tar.gz
+          tar -xzf natives-windows-x64.tar.gz -C phreox-backend/src/main/resources/natives
+          rm natives-windows-x64.tar.gz
       - uses: actions/setup-java@v4
         with:
           distribution: temurin

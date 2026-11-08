@@ -16,6 +16,13 @@ scripts/release.sh              the draft release: make it, put files in it, pub
 `Phreox/phreox` has one workflow, `dispatch`, which on every push of the main branch and of a tag starts a workflow here (`workflow_dispatch`: `publish.yml` for the apps, `website.yml` for
 `website-X.Y.Z` tags) with the branch or tag, its kind and the commit. The workflows here move the submodule `phreox` to that commit and build it. By hand: **Actions > publish > Run workflow** with a branch or tag.
 
+## When the apps are in the release
+
+The release is published as soon as the quick parts are in it (service, backend, space node, web). The Android app and the desktop apps (AppImage, exe, dmg) are added to the published release one
+after the other when they are done, and `SHA256SUMS` is written again each time (`release.sh refresh-checksums`, which also copes with two jobs writing it at the same moment). The apps look at the release for the file of their
+own system and offer an update only when it is there, so a file that is not there yet is not a problem. The libopus and PortAudio builds that the jobs need are in a second draft that is thrown away at the end, so the
+release has nothing but its files.
+
 ## No artifacts
 
 Nothing built is kept in a run. The release in `Phreox/releases` is made as a **draft** first; every job puts its files straight into it (`scripts/release.sh upload`), and the last job

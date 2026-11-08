@@ -8,6 +8,7 @@
 #   release.sh names <id> [glob]                          the names of the files of the draft, one per line
 #   release.sh delete <id> <glob>                         removes the files of the draft whose name fits
 #   release.sh checksums <id> <file>                      writes SHA256SUMS from the digests GitHub computed for the files (nothing is downloaded)
+#   release.sh refresh-checksums <id>                     (re)writes SHA256SUMS in the release, also while other jobs add files to it at the same time
 #   release.sh publish <id> <prerelease> <latest>         makes the draft a release
 #   release.sh discard <id>                               throws a draft away
 #
@@ -86,6 +87,34 @@ case "$command" in
       [[ "$digest" == sha256:* ]] || { echo "GitHub gave no checksum for $name" >&2; exit 1; }
       printf '%s  %s\n' "${digest#sha256:}" "$name" >> "$file"
     done
+    ;;
+
+  refresh-checksums)
+    id="$1"
+    work="$(mktemp -d)"
+
+    # Jobs put their files into the release one after the other, some after it is published, and each makes the list again. Two of them may do it at the same moment, and the
+    # one that finishes last would leave out the file of the other: so after writing the list it looks again, and writes it anew until every file that is there is in it.
+    for attempt in 1 2 3 4 5 6 7 8 9 10; do
+      if "$0" checksums "$id" "$work/SHA256SUMS" 2> /dev/null; then
+        "$0" upload "$id" "$work/SHA256SUMS" > /dev/null
+        sleep $((RANDOM % 5 + 2))
+
+        listed="$(awk '{ print $2 }' "$work/SHA256SUMS" | sort)"
+        present="$(assets "$id" | cut -f2 | grep -vx SHA256SUMS | sort || true)"
+
+        if [[ "$listed" == "$present" ]]; then
+          cat "$work/SHA256SUMS"
+          exit 0
+        fi
+      else
+        # GitHub works out the checksum of a file a moment after the upload.
+        sleep 3
+      fi
+    done
+
+    echo "SHA256SUMS does not list all files of the release" >&2
+    exit 1
     ;;
 
   publish)
