@@ -159,6 +159,7 @@ jobs:
           workspaces: |
             phreox/phreox-frontend
             phreox/phreox-presence
+            phreox/watchtogether
       - name: System libraries and appimagetool
         run: |
           sudo apt-get update
@@ -187,6 +188,8 @@ jobs:
           bash phreox-frontend/scripts/platform-make-runtime.sh phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/jre"
       - name: The presence helper
         run: cargo build --release --manifest-path phreox-presence/Cargo.toml
+      - name: The helper for watching together
+        run: cargo build --release --manifest-path watchtogether/Cargo.toml
       - name: The app of the channel
         working-directory: phreox/phreox-frontend
         env:
@@ -201,7 +204,7 @@ jobs:
           export EXTRA_LIBS="$(ldd phreox-frontend/target/release/phreox | awk '/libdav1d/ {print $3}')"
           bash phreox-frontend/scripts/platform-package-linux.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
             --binary phreox-frontend/target/release/phreox --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
-            --presence phreox-presence/target/release/phreox-presence --games phreox-presence/detectable.json \
+            --presence phreox-presence/target/release/phreox-presence --watch watchtogether/target/release/phreox-watchtogether --games phreox-presence/detectable.json \
             --icon phreox-frontend/crates/phreox-platform/assets/phreox-128.png --out "$RUNNER_TEMP/linux"
       - name: Into the release
         run: |
@@ -451,6 +454,7 @@ jobs:
           workspaces: |
             phreox/phreox-frontend
             phreox/phreox-presence
+            phreox/watchtogether
       # The compiler and the linker of Visual Studio in this shell: meson (dav1d) and cargo (openh264) both look for them.
       - uses: ilammy/msvc-dev-cmd@v1
       - name: The linker of Visual Studio, not the one of Git
@@ -489,6 +493,8 @@ jobs:
           bash phreox-frontend/scripts/platform-make-runtime.sh phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/jre"
       - name: The presence helper
         run: cargo build --release --manifest-path phreox-presence/Cargo.toml
+      - name: The helper for watching together
+        run: cargo build --release --manifest-path watchtogether/Cargo.toml
       - name: The app of the channel
         working-directory: phreox/phreox-frontend
         env:
@@ -502,7 +508,7 @@ jobs:
         run: |
           bash phreox-frontend/scripts/platform-package-windows.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
             --binary phreox-frontend/target/release/phreox.exe --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
-            --presence phreox-presence/target/release/phreox-presence.exe --games phreox-presence/detectable.json --out "$RUNNER_TEMP/win"
+            --presence phreox-presence/target/release/phreox-presence.exe --watch watchtogether/target/release/phreox-watchtogether.exe --games phreox-presence/detectable.json --out "$RUNNER_TEMP/win"
       - name: Into the release
         run: |
           "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/win/phreox-*.exe
@@ -535,6 +541,7 @@ jobs:
           workspaces: |
             phreox/phreox-frontend
             phreox/phreox-presence
+            phreox/watchtogether
       - name: Tools of the build
         # The packaging scripts use bash 4 (${name,,}); the one of macOS is 3.2.
         run: brew install --quiet bash pkg-config meson ninja
@@ -560,6 +567,8 @@ jobs:
           bash phreox-frontend/scripts/platform-make-runtime.sh phreox-backend/target/phreox-backend.jar "$RUNNER_TEMP/jre"
       - name: The presence helper
         run: cargo build --release --manifest-path phreox-presence/Cargo.toml
+      - name: The helper for watching together
+        run: cargo build --release --manifest-path watchtogether/Cargo.toml
       - name: The app of the channel
         working-directory: phreox/phreox-frontend
         env:
@@ -571,7 +580,7 @@ jobs:
         run: |
           bash phreox-frontend/scripts/platform-package-macos.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
             --binary phreox-frontend/target/release/phreox --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
-            --presence phreox-presence/target/release/phreox-presence --games phreox-presence/detectable.json \
+            --presence phreox-presence/target/release/phreox-presence --watch watchtogether/target/release/phreox-watchtogether --games phreox-presence/detectable.json \
             --icon phreox-frontend/crates/phreox-style/assets/phreox-logo-transparent.png --out "$RUNNER_TEMP/mac"
       - name: Into the release
         run: |
