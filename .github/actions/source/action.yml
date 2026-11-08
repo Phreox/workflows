@@ -17,6 +17,11 @@ runs:
         SHA: ${{ inputs.sha }}
         TOKEN: ${{ inputs.token }}
       run: |
+        if [[ -z "$TOKEN" ]]; then
+          echo "::error::The secret SUBMODULES_TOKEN is not set in this repository. Phreox/phreox and its submodules are private: make a fine-grained token with 'Contents: read' on all of them (Phreox/phreox, docs, api, app, backend, frontend, presence, server-common, service, space, watchtogether) and add it under Settings > Secrets and variables > Actions."
+          exit 1
+        fi
+
         # Every repository of Phreox is read with the token, the submodules of the submodules too.
         git config --global url."https://x-access-token:${TOKEN}@github.com/".insteadOf "https://github.com/"
         git submodule update --init phreox
