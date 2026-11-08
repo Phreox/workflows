@@ -1,0 +1,48 @@
+# Does the Rust app compile on macOS? Started by hand while the macOS build is brought back; it only runs `cargo check` of the app (no release, no packaging).
+#
+#   gh workflow run macos-check -R Phreox/workflows -f ref=main
+#
+# Secret: SUBMODULES_TOKEN (read access to Phreox/frontend).
+name: macos-check
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: "Branch, tag or commit of Phreox/frontend"
+        required: true
+        default: main
+
+permissions:
+  contents: read
+
+env:
+  CARGO_NET_RETRY: "8"
+
+jobs:
+  check:
+    runs-on: macos-26
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: Phreox/frontend
+          ref: ${{ inputs.ref }}
+          token: ${{ secrets.SUBMODULES_TOKEN }}
+          path: frontend
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: frontend
+      - name: Tools of the build
+        run: brew install --quiet pkg-config meson ninja
+      - name: dav1d (the AV1 decoder, part of the executable)
+        run: |
+          bash scripts/build-dav1d.sh "$RUNNER_TEMP/dav1d"
+          echo "PKG_CONFIG_PATH=$RUNNER_TEMP/dav1d/lib/pkgconfig" >> "$GITHUB_ENV"
+          echo "SYSTEM_DEPS_DAV1D_LINK=static" >> "$GITHUB_ENV"
+      - name: cargo check of the app
+        working-directory: frontend
+        # Windows and macOS leave GStreamer out; the decoders of the app itself (OpenH264, dav1d) are enough.
+        run: cargo check -p phreox-app --no-default-features --features cpu-renderer --message-format short
