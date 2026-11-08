@@ -35,6 +35,11 @@ permissions:
   contents: read
 
 env:
+  # Downloads of packages answer 5xx now and then: every client tries more often than its default.
+  NPM_CONFIG_FETCH_RETRIES: "6"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "5000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "60000"
+  CARGO_NET_RETRY: "8"
   RELEASES_REPO: Phreox/releases
   RELEASE: ${{ github.workspace }}/scripts/release.sh
 
@@ -69,13 +74,10 @@ jobs:
       - name: Build libopus and PortAudio
         run: bash phreox-backend/natives/build.sh "${{ matrix.name }}" "${{ matrix.arch }}"
       # macOS x64 is built on an arm64 machine and cannot run here.
-      - uses: actions/setup-java@v4
+      - uses: ./.github/actions/java
         if: matrix.name != 'macos' || matrix.arch == 'arm64'
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-          cache-dependency-path: phreox/pom.xml
+          cache: "true"
       - name: Gate, the built libopus loads and passes the probe
         if: matrix.name != 'macos' || matrix.arch == 'arm64'
         env:
@@ -142,12 +144,9 @@ jobs:
           "$RELEASE" download "${{ inputs.release }}" natives-windows-x64.tar.gz natives-windows-x64.tar.gz
           tar -xzf natives-windows-x64.tar.gz -C phreox-backend/src/main/resources/natives
           rm natives-windows-x64.tar.gz
-      - uses: actions/setup-java@v4
+      - uses: ./.github/actions/java
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-          cache-dependency-path: phreox/pom.xml
+          cache: "true"
       - name: Gate, opus.dll loads and passes the probe
         env:
           PHREOX_REQUIRE_NATIVES: "1"

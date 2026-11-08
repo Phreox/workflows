@@ -1,0 +1,45 @@
+name: java
+description: >
+  Java 25 (Temurin), tried up to three times. The JDK comes from a GitHub release download, which answers 504 now and then; a job should not fail
+  for that.
+inputs:
+  cache:
+    description: Whether to cache the Maven repository ("true" or "false").
+    default: "false"
+runs:
+  using: composite
+  steps:
+    - id: first
+      uses: actions/setup-java@v4
+      continue-on-error: true
+      with:
+        distribution: temurin
+        java-version: "25"
+        cache: ${{ inputs.cache == 'true' && 'maven' || '' }}
+        cache-dependency-path: ${{ inputs.cache == 'true' && 'phreox/pom.xml' || '' }}
+    - if: steps.first.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::The JDK could not be downloaded, trying again in 30 seconds"
+        sleep 30
+    - id: second
+      if: steps.first.outcome == 'failure'
+      uses: actions/setup-java@v4
+      continue-on-error: true
+      with:
+        distribution: temurin
+        java-version: "25"
+        cache: ${{ inputs.cache == 'true' && 'maven' || '' }}
+        cache-dependency-path: ${{ inputs.cache == 'true' && 'phreox/pom.xml' || '' }}
+    - if: steps.first.outcome == 'failure' && steps.second.outcome == 'failure'
+      shell: bash
+      run: |
+        echo "::warning::The JDK could not be downloaded again, last try in 90 seconds"
+        sleep 90
+    - if: steps.first.outcome == 'failure' && steps.second.outcome == 'failure'
+      uses: actions/setup-java@v4
+      with:
+        distribution: temurin
+        java-version: "25"
+        cache: ${{ inputs.cache == 'true' && 'maven' || '' }}
+        cache-dependency-path: ${{ inputs.cache == 'true' && 'phreox/pom.xml' || '' }}

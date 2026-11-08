@@ -50,6 +50,11 @@ concurrency:
 
 env:
   RELEASES_REPO: Phreox/releases
+  # Downloads of packages answer 5xx now and then: every client tries more often than its default.
+  NPM_CONFIG_FETCH_RETRIES: "6"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "5000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "60000"
+  CARGO_NET_RETRY: "8"
   RELEASE: ${{ github.workspace }}/scripts/release.sh
 
 jobs:
@@ -144,12 +149,10 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-      - uses: actions/setup-java@v4
+          frontend-branch: react-legacy
+      - uses: ./.github/actions/java
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-          cache-dependency-path: phreox/pom.xml
+          cache: "true"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -201,10 +204,8 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-      - uses: actions/setup-java@v4
-        with:
-          distribution: temurin
-          java-version: "25"
+          frontend-branch: react-legacy
+      - uses: ./.github/actions/java
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -235,10 +236,24 @@ jobs:
         run: |
           # The version code grows with every build, so a newer build can always be installed over an older one. The apps were built by the workflow of
           # Phreox/phreox before this repository took over, whose run numbers were below 100000: the numbers of this one start above them.
-          ./gradlew --no-daemon assembleRelease \
-            -PphreoxApplicationId="$PHREOX_APP_ID" -PphreoxAppName="$PHREOX_APP_NAME" -PphreoxScheme="$PHREOX_SCHEME" \
-            -PphreoxVersionName="${{ needs.plan.outputs.version }}" -PphreoxVersionCode="$((100000 + ${{ github.run_number }}))" \
-            -PphreoxKeystore="$RUNNER_TEMP/phreox.jks" -PphreoxKeystorePassword="$STORE_PASSWORD" -PphreoxKeyAlias="$KEY_ALIAS"
+          # The wrapper downloads Gradle from services.gradle.org and gives up after 10 seconds by default: it waits two minutes, and the whole
+          # build is tried three times (a download that fails is the only reason it should).
+          sed -i '/^networkTimeout=/d' gradle/wrapper/gradle-wrapper.properties
+          echo "networkTimeout=120000" >> gradle/wrapper/gradle-wrapper.properties
+
+          for attempt in 1 2 3; do
+            ./gradlew --no-daemon assembleRelease \
+              -PphreoxApplicationId="$PHREOX_APP_ID" -PphreoxAppName="$PHREOX_APP_NAME" -PphreoxScheme="$PHREOX_SCHEME" \
+              -PphreoxVersionName="${{ needs.plan.outputs.version }}" -PphreoxVersionCode="$((100000 + ${{ github.run_number }}))" \
+              -PphreoxKeystore="$RUNNER_TEMP/phreox.jks" -PphreoxKeystorePassword="$STORE_PASSWORD" -PphreoxKeyAlias="$KEY_ALIAS" && break
+
+            if [[ "$attempt" == 3 ]]; then
+              exit 1
+            fi
+
+            echo "::warning::Gradle failed (attempt $attempt of 3), again in 30 seconds"
+            sleep 30
+          done
           mv app/build/outputs/apk/release/app-release.apk \
             "phreox-${{ needs.plan.outputs.channel }}-${{ needs.plan.outputs.version }}-android-universal.apk"
       - name: Into the release
@@ -262,12 +277,9 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-      - uses: actions/setup-java@v4
+      - uses: ./.github/actions/java
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-          cache-dependency-path: phreox/pom.xml
+          cache: "true"
       - name: phreox-service.jar
         run: |
           mvn -B -q -pl phreox-service -am -DskipTests package
@@ -294,12 +306,9 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-      - uses: actions/setup-java@v4
+      - uses: ./.github/actions/java
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-          cache-dependency-path: phreox/pom.xml
+          cache: "true"
       - name: libopus and PortAudio of every platform
         continue-on-error: true
         run: |
@@ -335,12 +344,9 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-      - uses: actions/setup-java@v4
+      - uses: ./.github/actions/java
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-          cache-dependency-path: phreox/pom.xml
+          cache: "true"
       - name: phreox-space.jar
         run: |
           mvn -B -q -pl phreox-space -am -DskipTests package
@@ -365,6 +371,7 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
+          frontend-branch: react-legacy
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -402,12 +409,10 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-      - uses: actions/setup-java@v4
+          frontend-branch: react-legacy
+      - uses: ./.github/actions/java
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-          cache-dependency-path: phreox/pom.xml
+          cache: "true"
       - uses: actions/setup-node@v4
         with:
           node-version: 22
@@ -461,12 +466,10 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-      - uses: actions/setup-java@v4
+          frontend-branch: react-legacy
+      - uses: ./.github/actions/java
         with:
-          distribution: temurin
-          java-version: "25"
-          cache: maven
-          cache-dependency-path: phreox/pom.xml
+          cache: "true"
       - uses: actions/setup-node@v4
         with:
           node-version: 22

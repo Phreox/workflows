@@ -9,6 +9,12 @@ inputs:
   token:
     description: A token that can read Phreox/phreox and its submodules (they are private).
     required: true
+  frontend-branch:
+    description: >
+      A branch of the frontend repository (phreox-frontend) to build instead of the commit the pointer shows. The pointer shows the Rust app; the
+      jobs that build the React app (web, Android, desktop) ask for react-legacy.
+    required: false
+    default: ""
 runs:
   using: composite
   steps:
@@ -16,6 +22,7 @@ runs:
       env:
         SHA: ${{ inputs.sha }}
         TOKEN: ${{ inputs.token }}
+        FRONTEND_BRANCH: ${{ inputs.frontend-branch }}
       run: |
         if [[ -z "$TOKEN" ]]; then
           echo "::error::The secret SUBMODULES_TOKEN is not set in this repository. Phreox/phreox and its submodules are private: make a fine-grained token with 'Contents: read' on all of them (Phreox/phreox, docs, api, app, backend, frontend, presence, server-common, service, space, watchtogether) and add it under Settings > Secrets and variables > Actions."
@@ -28,4 +35,11 @@ runs:
         git -C phreox fetch --no-tags origin "$SHA"
         git -C phreox checkout --force "$SHA"
         git -C phreox submodule update --init --recursive
+
+        if [[ -n "$FRONTEND_BRANCH" ]]; then
+          git -C phreox/phreox-frontend fetch --no-tags origin "$FRONTEND_BRANCH"
+          git -C phreox/phreox-frontend checkout --force FETCH_HEAD
+          echo "phreox-frontend: branch $FRONTEND_BRANCH, $(git -C phreox/phreox-frontend log --oneline -1)"
+        fi
+
         git -C phreox log --oneline -1

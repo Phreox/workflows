@@ -35,6 +35,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Downloads of packages answer 5xx now and then: every client tries more often than its default.
+  NPM_CONFIG_FETCH_RETRIES: "6"
+  NPM_CONFIG_FETCH_RETRY_MINTIMEOUT: "5000"
+  NPM_CONFIG_FETCH_RETRY_MAXTIMEOUT: "60000"
+  CARGO_NET_RETRY: "8"
   RELEASES_REPO: Phreox/releases
   RELEASE: ${{ github.workspace }}/scripts/release.sh
 
