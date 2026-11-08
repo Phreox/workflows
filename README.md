@@ -31,9 +31,16 @@ writes `SHA256SUMS` from the digests GitHub made, replaces the previous dev rele
 
 ## The desktop app
 
-The Linux app (`desktop`) is the Rust app: `phreox-frontend` is built with `cargo` and packaged by `phreox-frontend/scripts/platform-package-linux.sh` into an AppImage, no npm. The Windows and macOS apps
-(`desktop-win`, `desktop-mac`) are still the Electron app, built from the branch `react-legacy` of the frontend repository, until the Rust builds for them exist (what is missing: the AV1 decoder `dav1d` without a system package, a checked run of the NSIS
-installer with the WinShell plugin, and a run on macOS; `phreox-frontend/scripts/platform-package-windows.sh` and `-macos.sh` are written). The web version, the Android app and the website are the React app and also come from `react-legacy`.
+All three desktop apps are the Rust app: `phreox-frontend` is built with `cargo` and packaged by its `scripts/platform-package-linux.sh` (AppImage), `-windows.sh` (NSIS installer) and `-macos.sh` (disk image), no
+npm. The JDK that `jlink` takes the runtime from, the backend jar, the presence helper and its game list are made in the same job. The names are the ones the updater of the app picks by:
+`phreox-<channel>-<version>-linux-x86_64.AppImage`, `-win-x86_64.exe`, `-mac-arm64.dmg`.
+
+- **Linux** (`desktop`): GStreamer and libdav1d come from the packages of the runner, libdav1d goes into the AppImage.
+- **Windows** (`desktop-win`) and **macOS** (`desktop-mac`): built without GStreamer (`--no-default-features --features cpu-renderer`). dav1d has no package there, so `scripts/build-dav1d.sh` builds the pinned release
+  as a static library (meson) and the executable carries the decoder (`SYSTEM_DEPS_DAV1D_LINK=static`). The installer of Windows needs the WinShell plugin of NSIS, a pinned download. Neither platform had a
+  checked run of the Rust app before these jobs: a failure of one of them leaves its file out of the release (the jobs add their files when they are done), it does not stop the release.
+
+The web version, the Android app and the website are still the React app, built from the branch `react-legacy` of the frontend repository (`frontend-branch` of the `source` action).
 
 ## Secrets (of this repository)
 
