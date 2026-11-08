@@ -31,17 +31,14 @@ writes `SHA256SUMS` from the digests GitHub made, replaces the previous dev rele
 
 ## The desktop app
 
-The Linux and Windows apps are the Rust app: `phreox-frontend` is built with `cargo` and packaged by its `scripts/platform-package-linux.sh` (AppImage) and `-windows.sh` (NSIS installer), no npm. The JDK that
-`jlink` takes the runtime from, the backend jar, the presence helper and its game list are made in the same job. The names are the ones the updater of the app picks by:
-`phreox-<channel>-<version>-linux-x86_64.AppImage`, `-win-x86_64.exe`.
+All three desktop apps are the Rust app: `phreox-frontend` is built with `cargo` and packaged by its `scripts/platform-package-linux.sh` (AppImage), `-windows.sh` (NSIS installer) and `-macos.sh` (disk image), no
+npm. The JDK that `jlink` takes the runtime from, the backend jar, the presence helper and its game list are made in the same job. The names are the ones the updater of the app picks by:
+`phreox-<channel>-<version>-linux-x86_64.AppImage`, `-win-x86_64.exe`, `-mac-arm64.dmg`.
 
 - **Linux** (`desktop`): GStreamer and libdav1d come from the packages of the runner, libdav1d goes into the AppImage.
-- **Windows** (`desktop-win`): built without GStreamer (`--no-default-features --features cpu-renderer`). dav1d has no package there, so `scripts/build-dav1d.sh` builds the pinned release as a static library
-  (meson) and the executable carries the decoder (`SYSTEM_DEPS_DAV1D_LINK=static`). The installer needs the WinShell plugin of NSIS, a pinned download. The Rust app had no checked run on Windows before this job: a failure
-  leaves its file out of the release (the jobs add their files when they are done), it does not stop the release.
-- **macOS** (`desktop-mac`) is still the **Electron** app (the React app from `react-legacy`), because `phreox-platform` does not compile on macOS yet: the tray types of `muda` and `tray-icon` are not `Send` but sit in
-  the `Inner` of `platform.rs` that is shared between threads, and `local_key/legacy/chromium.rs` needs the `alloc` feature of `cbc` for `decrypt_padded_vec`. The job for the Rust app (`brew`, dav1d, `cargo`,
-  `platform-package-macos.sh`) is in the history of this repository, commit `8fe1c0e`; put it back when the crate builds there.
+- **Windows** (`desktop-win`) and **macOS** (`desktop-mac`): built without GStreamer (`--no-default-features --features cpu-renderer`). dav1d has no package there, so `scripts/build-dav1d.sh` builds the pinned release
+  as a static library (meson) and the executable carries the decoder (`SYSTEM_DEPS_DAV1D_LINK=static`). The installer of Windows needs the WinShell plugin of NSIS, a pinned download. Neither platform had a
+  checked run of the Rust app before these jobs: a failure of one of them leaves its file out of the release (the jobs add their files when they are done), it does not stop the release.
 
 The web version, the Android app and the website are still the React app, built from the branch `react-legacy` of the frontend repository (`frontend-branch` of the `source` action).
 
