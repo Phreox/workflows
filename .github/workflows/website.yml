@@ -2,7 +2,7 @@
 #
 #   tag website-1.2.3   ->  release "Phreox Website 1.2.3" in Phreox/releases with phreox-website-1.2.3.tar.gz and SHA256SUMS
 #
-# Phreox/phreox tells this repository about the tag (event `phreox-website`), this repository has Phreox/phreox as a submodule and builds that commit. As in publish.yml
+# The workflow `dispatch` of Phreox/phreox starts this one for the tag (workflow_dispatch), this repository has Phreox/phreox as a submodule and builds that commit. As in publish.yml
 # nothing is kept as an artifact: the release is a draft, the files go straight into it, and it is published at the end (and thrown away if the build fails).
 #
 # The egg "Phreox Website" (pterodactyl/egg-phreox-website.json) takes the newest website-X.Y.Z at installation and at every start. The tag does not look like a version of an
@@ -13,8 +13,6 @@
 name: website
 
 on:
-  repository_dispatch:
-    types: [phreox-website]
   workflow_dispatch:
     inputs:
       version:
@@ -24,6 +22,10 @@ on:
         description: "Branch, tag or commit of Phreox/phreox to build"
         required: true
         default: master
+      sha:
+        description: "The commit to build (the workflow of Phreox/phreox gives it; by hand it is the one the ref points to)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
@@ -49,13 +51,12 @@ jobs:
       - id: what
         shell: bash
         env:
-          TAG: ${{ github.event.client_payload.ref || '' }}
-          SHA: ${{ github.event.client_payload.sha || '' }}
+          SHA: ${{ inputs.sha }}
           INPUT_VERSION: ${{ inputs.version }}
           INPUT_REF: ${{ inputs.ref }}
           LOOKUP: ${{ secrets.SUBMODULES_TOKEN }}
         run: |
-          if [[ -n "$TAG" ]]; then version="${TAG#website-}"; else version="$INPUT_VERSION"; fi
+          version="${INPUT_VERSION#website-}"
           if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then echo "::error::'$version' is not a version like 1.2.3"; exit 1; fi
           [[ -n "$SHA" ]] || SHA="$(GH_TOKEN="$LOOKUP" gh api "repos/Phreox/phreox/commits/${INPUT_REF}" --jq .sha)"
           { echo "version=$version"; echo "sha=$SHA"; } >> "$GITHUB_OUTPUT"

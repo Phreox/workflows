@@ -5,7 +5,7 @@
 #   tag 1.2.3-beta.N / -pre.N / -rc.N       ->  pre-release, channel beta
 #   tag 1.2.3-alpha.N / -pre.alpha.N        ->  pre-release, channel alpha
 #
-# The push happens in Phreox/phreox, whose workflow `dispatch` tells this repository (repository_dispatch, event `phreox`); this repository has Phreox/phreox as a submodule
+# The push happens in Phreox/phreox, whose workflow `dispatch` starts this one (workflow_dispatch, with the branch or tag and the commit); this repository has Phreox/phreox as a submodule
 # (./phreox) and builds the commit it was told about. Run by hand (Actions > publish > Run workflow) it builds the branch or tag you name.
 #
 # NO ARTIFACTS: nothing built is kept in the run. The release is made as a DRAFT first, every job puts its files straight into it (scripts/release.sh), and a last job
@@ -23,22 +23,28 @@
 name: publish
 
 on:
-  repository_dispatch:
-    types: [phreox]
   workflow_dispatch:
     inputs:
       ref:
         description: "Branch or tag of Phreox/phreox to build (a tag like 1.2.3 makes a release, a branch a dev release)"
         required: true
         default: master
+      ref_type:
+        description: "Is it a branch or a tag (the workflow of Phreox/phreox says so; by hand it is worked out from the name)"
+        required: false
+        default: ""
+      sha:
+        description: "The commit to build (the workflow of Phreox/phreox gives it; by hand it is the one the ref points to)"
+        required: false
+        default: ""
 
 permissions:
   contents: read
 
 # A newer push to the branch makes an older run pointless: it would publish a dev release that is replaced at once.
 concurrency:
-  group: publish-${{ github.event.client_payload.ref || inputs.ref }}
-  cancel-in-progress: ${{ (github.event.client_payload.ref_type || 'branch') == 'branch' }}
+  group: publish-${{ inputs.ref }}
+  cancel-in-progress: ${{ inputs.ref_type != 'tag' }}
 
 env:
   RELEASES_REPO: Phreox/releases
@@ -66,9 +72,9 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ secrets.SUBMODULES_TOKEN }}
-          REF: ${{ github.event.client_payload.ref || inputs.ref }}
-          REF_TYPE: ${{ github.event.client_payload.ref_type || '' }}
-          PAYLOAD_SHA: ${{ github.event.client_payload.sha || '' }}
+          REF: ${{ inputs.ref }}
+          REF_TYPE: ${{ inputs.ref_type }}
+          PAYLOAD_SHA: ${{ inputs.sha }}
         run: |
           ref="$REF"
           type="$REF_TYPE"

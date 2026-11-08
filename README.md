@@ -13,7 +13,7 @@ scripts/release.sh              the draft release: make it, put files in it, pub
 
 ## How a build starts
 
-`Phreox/phreox` has one workflow, `dispatch`, which on every push of the main branch and of a tag tells this repository (`repository_dispatch`: event `phreox` for the apps, `phreox-website` for
+`Phreox/phreox` has one workflow, `dispatch`, which on every push of the main branch and of a tag starts a workflow here (`workflow_dispatch`: `publish.yml` for the apps, `website.yml` for
 `website-X.Y.Z` tags) with the branch or tag, its kind and the commit. The workflows here move the submodule `phreox` to that commit and build it. By hand: **Actions > publish > Run workflow** with a branch or tag.
 
 ## No artifacts
@@ -31,8 +31,7 @@ writes `SHA256SUMS` from the digests GitHub made, replaces the previous dev rele
 | `UPDATE_TOKEN` | the token the apps use to ask `Phreox/releases` for updates (built into them) |
 | `ANDROID_KEYSTORE_BASE64`, `ANDROID_KEYSTORE_PASSWORD`, `ANDROID_KEY_ALIAS` | the key every Android build is signed with |
 
-`Phreox/phreox` needs one secret, `WORKFLOWS_TOKEN`: a token that may start workflows in this repository (a fine-grained token with "Contents: read and write" on `Phreox/workflows`, which
-`repository_dispatch` needs).
+`Phreox/phreox` needs one secret, `WORKFLOWS_TOKEN`: a token that may start workflows in this repository (a fine-grained token with "Actions: read and write" on `Phreox/workflows`; nothing more).
 
 ## Notes
 
