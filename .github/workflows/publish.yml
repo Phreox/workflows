@@ -453,6 +453,9 @@ jobs:
             phreox/phreox-presence
       # The compiler and the linker of Visual Studio in this shell: meson (dav1d) and cargo (openh264) both look for them.
       - uses: ilammy/msvc-dev-cmd@v1
+      - name: The linker of Visual Studio, not the one of Git
+        # bash of Git has a link.exe of its own (the GNU one, for hard links) in front of the linker of Visual Studio in the PATH: meson and cargo would take it.
+        run: rm -f /usr/bin/link.exe
       - name: Tools of the build (pkg-config, meson, NSIS with its WinShell plugin)
         run: |
           choco install -y --no-progress pkgconfiglite nsis nasm
