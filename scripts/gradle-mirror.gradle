@@ -1,0 +1,26 @@
+// Init script for Gradle on the runners: Maven Central answers 429 (Too Many Requests) to the shared addresses of GitHub's runners, now and then for
+// minutes at a time. Every repository that points at Maven Central is pointed at the mirror Google keeps of it, which has no such limit.
+def central = "https://repo.maven.apache.org/maven2"
+def mirror = "https://maven-central.storage-download.googleapis.com/maven2/"
+
+def redirect = { repositories ->
+    repositories.configureEach { repository ->
+        if (repository instanceof MavenArtifactRepository && repository.url.toString().startsWith(central)) {
+            repository.url = mirror
+        }
+    }
+}
+
+beforeSettings { settings ->
+    redirect(settings.pluginManagement.repositories)
+}
+
+settingsEvaluated { settings ->
+    redirect(settings.pluginManagement.repositories)
+    redirect(settings.dependencyResolutionManagement.repositories)
+}
+
+allprojects {
+    redirect(buildscript.repositories)
+    redirect(repositories)
+}

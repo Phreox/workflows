@@ -228,6 +228,19 @@ jobs:
             echo "::warning::ANDROID_KEYSTORE_BASE64 is not set, the APK is signed with a throwaway key and cannot update an installed app"
             keytool -genkeypair -keystore "$RUNNER_TEMP/phreox.jks" -storepass throwaway -keypass throwaway -alias phreox -keyalg RSA -keysize 2048 -validity 3650 -dname "CN=Phreox CI"
           fi
+      # Maven Central answers the runners with 429 now and then: the dependencies are cached, and Central is read from a mirror.
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.gradle/caches
+            ~/.gradle/wrapper
+          key: gradle-${{ runner.os }}-${{ hashFiles('phreox/phreox-app/android/**/*.gradle', 'phreox/phreox-app/android/**/*.properties', 'phreox/phreox-app/android/**/*.toml') }}
+          restore-keys: gradle-${{ runner.os }}-
+      - name: Mirror of Maven Central for Gradle
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p ~/.gradle/init.d
+          cp scripts/gradle-mirror.gradle ~/.gradle/init.d/mirror.gradle
       - name: APK
         working-directory: phreox/phreox-app/android
         env:
