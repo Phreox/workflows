@@ -70,6 +70,15 @@ jobs:
           id="$("$RELEASE" draft "website-${{ steps.what.outputs.version }}" "Phreox Website ${{ steps.what.outputs.version }}" false \
             "The website of phreox.com. Built from https://github.com/Phreox/phreox/commit/${{ steps.what.outputs.sha }}")"
           echo "id=$id" >> "$GITHUB_OUTPUT"
+      # The website renders the news with the Markdown component of the React app, which the Rust app does not replace: it comes from the branch react-legacy of the frontend repository
+      # (the commit in the submodule is the Rust app).
+      - name: The React app of the frontend
+        shell: bash
+        working-directory: phreox
+        run: |
+          git -C phreox-frontend fetch --no-tags --depth=1 origin react-legacy
+          git -C phreox-frontend checkout --force FETCH_HEAD
+          git -C phreox-frontend log --oneline -1
       - name: Build
         shell: bash
         working-directory: phreox
