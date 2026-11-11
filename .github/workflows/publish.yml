@@ -270,8 +270,9 @@ jobs:
           PHREOX_APPLICATION_ID: ${{ needs.plan.outputs.channel == 'release' && 'talk.phreox.rust' || format('talk.phreox.rust.{0}', needs.plan.outputs.channel) }}
           PHREOX_APP_NAME: ${{ needs.plan.outputs.channel == 'release' && 'Phreox' || format('Phreox {0}', needs.plan.outputs.channel) }}
           PHREOX_VERSION_NAME: ${{ needs.plan.outputs.version }}
-          PHREOX_VERSION_CODE: ${{ format('{0}', 100000 + github.run_number) }}
         run: |
+          # The version code grows with every run, so a newer build installs over an older one (GitHub expressions have no arithmetic).
+          export PHREOX_VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER))
           export ANDROID_NDK_HOME="$ANDROID_HOME/ndk/28.2.13676358"
           PATH="/tmp/android-tools/bin:$PATH" bash scripts/android-build.sh
           cp android/app/build/outputs/apk/release/app-release.apk \
