@@ -1,0 +1,13 @@
+name: Ubuntu packages
+description: Install build dependencies with bounded downloads and DNS recovery on hosted runners.
+inputs:
+  packages:
+    description: Space-separated Ubuntu package names.
+    required: true
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      env:
+        PACKAGES: ${{ inputs.packages }}
+      run: bash "$GITHUB_ACTION_PATH/install.sh"
