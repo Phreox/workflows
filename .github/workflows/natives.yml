@@ -5,7 +5,7 @@
 # the release removes them again.
 #
 #   - Linux and macOS are built on their own runners (macOS x64 is cross built on an arm64 machine).
-#   - Windows is cross built on Linux with MinGW-w64, and loaded once on a Windows runner with the real backend code.
+#   - Windows is cross built on Linux with MinGW-w64; natives-check.yml loads it on a Windows runner with the real backend code.
 #
 # Every build is checked by the probe test of the backend (OpusNativeTest with PHREOX_REQUIRE_NATIVES=1). A platform that fails is left out and says so in its job; it does not
 # stop the release (continue-on-error): the jar just goes without the natives of that platform.
@@ -117,37 +117,3 @@ jobs:
         run: |
           tar -czf "$RUNNER_TEMP/natives-windows-x64.tar.gz" -C phreox-backend/src/main/resources/natives windows-x64
           "$RELEASE" upload "${{ inputs.release }}" "$RUNNER_TEMP/natives-windows-x64.tar.gz"
-
-  # Loads the Windows build the way the app does (NativeLoader, foreign function API) on a real Windows machine. It does not hold the release back: if it fails, the job is red
-  # and the DLLs are still in the jar, which is no worse than having no sound library there at all.
-  windows-check:
-    needs: windows
-    runs-on: windows-latest
-    timeout-minutes: 30
-    continue-on-error: true
-    env:
-      GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
-    defaults:
-      run:
-        shell: bash
-        working-directory: phreox
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/source
-        with:
-          sha: ${{ inputs.sha }}
-          token: ${{ secrets.SUBMODULES_TOKEN }}
-      - name: The Windows build from the release
-        run: |
-          mkdir -p phreox-backend/src/main/resources/natives
-          # A relative name: tar of Windows takes "D:\a\_temp\file" for a file on a computer called D.
-          "$RELEASE" download "${{ inputs.release }}" natives-windows-x64.tar.gz natives-windows-x64.tar.gz
-          tar -xzf natives-windows-x64.tar.gz -C phreox-backend/src/main/resources/natives
-          rm natives-windows-x64.tar.gz
-      - uses: ./.github/actions/java
-        with:
-          cache: "true"
-      - name: Gate, opus.dll loads and passes the probe
-        env:
-          PHREOX_REQUIRE_NATIVES: "1"
-        run: mvn -B -q -pl phreox-backend -am test -Dtest=OpusNativeTest -Dsurefire.failIfNoSpecifiedTests=false

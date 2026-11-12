@@ -133,12 +133,25 @@ jobs:
       release: ${{ needs.plan.outputs.helpers }}
     secrets: inherit
 
+  # The Windows check of the natives runs beside the desktop jobs: nothing waits for it, so it does not add to the length of the run.
+  natives-check:
+    needs: [plan, natives]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
+    uses: ./.github/workflows/natives-check.yml
+    with:
+      sha: ${{ needs.plan.outputs.sha }}
+      release: ${{ needs.plan.outputs.helpers }}
+    secrets: inherit
+
   desktop:
     needs: [plan, natives]
     if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      # Dev builds come on every push: they skip the link-time optimisation and split the work over more units (faster; the release keeps its profile).
+      CARGO_PROFILE_RELEASE_LTO: ${{ needs.plan.outputs.channel == 'dev' && 'off' || 'thin' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ needs.plan.outputs.channel == 'dev' && '256' || '16' }}
     defaults:
       run:
         shell: bash
@@ -222,6 +235,9 @@ jobs:
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      # Dev builds come on every push: they skip the link-time optimisation and split the work over more units (faster; the release keeps its profile).
+      CARGO_PROFILE_RELEASE_LTO: ${{ needs.plan.outputs.channel == 'dev' && 'off' || 'thin' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ needs.plan.outputs.channel == 'dev' && '256' || '16' }}
     defaults:
       run:
         shell: bash
@@ -431,6 +447,9 @@ jobs:
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      # Dev builds come on every push: they skip the link-time optimisation and split the work over more units (faster; the release keeps its profile).
+      CARGO_PROFILE_RELEASE_LTO: ${{ needs.plan.outputs.channel == 'dev' && 'off' || 'thin' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ needs.plan.outputs.channel == 'dev' && '256' || '16' }}
     defaults:
       run:
         shell: bash
@@ -543,6 +562,9 @@ jobs:
     timeout-minutes: 90
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+      # Dev builds come on every push: they skip the link-time optimisation and split the work over more units (faster; the release keeps its profile).
+      CARGO_PROFILE_RELEASE_LTO: ${{ needs.plan.outputs.channel == 'dev' && 'off' || 'thin' }}
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: ${{ needs.plan.outputs.channel == 'dev' && '256' || '16' }}
     defaults:
       run:
         shell: bash
