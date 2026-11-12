@@ -40,7 +40,7 @@ npm. The JDK that `jlink` takes the runtime from, the backend jar, the presence 
   as a static library (meson) and the executable carries the decoder (`SYSTEM_DEPS_DAV1D_LINK=static`). The installer of Windows needs the WinShell plugin of NSIS, a pinned download. Neither platform had a
   checked run of the Rust app before these jobs: a failure of one of them leaves its file out of the release (the jobs add their files when they are done), it does not stop the release.
 
-The web version, the Android app and the website are still the React app, built from the branch `react-legacy` of the frontend repository (`frontend-branch` of the `source` action).
+The web version is built from the Rust/Dioxus crate (`phreox-web`). The website still imports the Markdown component from the branch `react-legacy` of the frontend repository (`frontend-branch` of the `source` action).
 
 ## Secrets (of this repository)
 

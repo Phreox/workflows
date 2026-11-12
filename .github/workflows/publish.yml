@@ -393,19 +393,24 @@ jobs:
         with:
           sha: ${{ needs.plan.outputs.sha }}
           token: ${{ secrets.SUBMODULES_TOKEN }}
-          frontend-branch: react-legacy
-      - uses: actions/setup-node@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          node-version: 22
-      - name: Build
-        env:
-          VITE_PHREOX_WEB: "1"
-          VITE_PHREOX_CHANNEL: ${{ needs.plan.outputs.channel }}
-          VITE_PHREOX_VERSION: ${{ needs.plan.outputs.version }}
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: phreox/phreox-frontend
+      - name: dx (Dioxus CLI)
         run: |
-          (cd phreox-frontend && npm ci && npx vite build)
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/dx.tar.gz" https://github.com/DioxusLabs/dioxus/releases/download/v0.8.0-alpha.3/dx-x86_64-unknown-linux-gnu.tar.gz
+          echo "3b0983eb645dedd812e408055704bf0ecf90c05bade7a443cf64cfc6d13526db  $RUNNER_TEMP/dx.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/dx-bin"
+          tar -xzf "$RUNNER_TEMP/dx.tar.gz" -C "$RUNNER_TEMP/dx-bin"
+          echo "$RUNNER_TEMP/dx-bin" >> "$GITHUB_PATH"
+      - name: Build
+        run: |
+          (cd phreox-frontend/crates/phreox-web && dx bundle --platform web --release --out-dir "$RUNNER_TEMP/dx-out")
           mkdir -p "$RUNNER_TEMP/pack"
-          cp -r phreox-frontend/dist "$RUNNER_TEMP/pack/site"
+          cp -r "$RUNNER_TEMP/dx-out/public" "$RUNNER_TEMP/pack/site"
           cp pterodactyl/web-server.mjs "$RUNNER_TEMP/pack/server.mjs"
           tar -czf "$RUNNER_TEMP/phreox-web-${{ needs.plan.outputs.channel }}-${{ needs.plan.outputs.version }}.tar.gz" -C "$RUNNER_TEMP/pack" .
       - name: Into the release
