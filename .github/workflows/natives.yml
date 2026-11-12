@@ -52,7 +52,6 @@ jobs:
           - { os: ubuntu-latest, name: linux, arch: x64 }
           - { os: ubuntu-24.04-arm, name: linux, arch: arm64 }
           - { os: macos-26, name: macos, arch: arm64 }
-          - { os: macos-26, name: macos, arch: x64 }
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     continue-on-error: true
@@ -75,13 +74,10 @@ jobs:
           packages: libasound2-dev cmake
       - name: Build libopus and PortAudio
         run: bash phreox-backend/natives/build.sh "${{ matrix.name }}" "${{ matrix.arch }}"
-      # macOS x64 is built on an arm64 machine and cannot run here.
       - uses: ./.github/actions/java
-        if: matrix.name != 'macos' || matrix.arch == 'arm64'
         with:
           cache: "true"
       - name: Gate, the built libopus loads and passes the probe
-        if: matrix.name != 'macos' || matrix.arch == 'arm64'
         env:
           PHREOX_REQUIRE_NATIVES: "1"
         run: mvn -B -q -pl phreox-backend -am test -Dtest=OpusNativeTest -Dsurefire.failIfNoSpecifiedTests=false
