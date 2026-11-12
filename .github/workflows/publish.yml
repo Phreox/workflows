@@ -511,11 +511,25 @@ jobs:
           PHREOX_UPDATE_TOKEN: ${{ secrets.UPDATE_TOKEN }}
         # Windows and macOS leave GStreamer out (the crate says so); the decoders of the app itself (OpenH264, dav1d) are enough.
         run: cargo build --release -p phreox-app --no-default-features --features cpu-renderer
+      # The Visual C++ runtime for the installer. Microsoft's own link; the file must carry Microsoft's signature, otherwise the build stops.
+      - name: Visual C++ runtime download
+        run: |
+          curl -fsSL --retry 5 --retry-all-errors -o "$RUNNER_TEMP/vc_redist.x64.exe" https://aka.ms/vs/17/release/vc_redist.x64.exe
+          cat > "$RUNNER_TEMP/check-signature.ps1" <<'EOF'
+          param([string]$Target)
+          $sig = Get-AuthenticodeSignature -LiteralPath $Target
+          if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notmatch 'Microsoft Corporation') {
+              Write-Error "not signed by Microsoft: $($sig.Status) $($sig.SignerCertificate.Subject)"
+              exit 1
+          }
+          EOF
+          pwsh -NoProfile -File "$(cygpath -w "$RUNNER_TEMP/check-signature.ps1")" -Target "$(cygpath -w "$RUNNER_TEMP/vc_redist.x64.exe")"
       - name: Installer
         run: |
           bash phreox-frontend/scripts/platform-package-windows.sh --channel "${{ needs.plan.outputs.channel }}" --version "${{ needs.plan.outputs.version }}" \
             --binary phreox-frontend/target/release/phreox.exe --jar phreox-backend/target/phreox-backend.jar --jre "$RUNNER_TEMP/jre" \
-            --presence phreox-presence/target/release/phreox-presence.exe --watch watchtogether/target/release/phreox-watchtogether.exe --games phreox-presence/detectable.json --out "$RUNNER_TEMP/win"
+            --presence phreox-presence/target/release/phreox-presence.exe --watch watchtogether/target/release/phreox-watchtogether.exe --games phreox-presence/detectable.json --out "$RUNNER_TEMP/win" \
+            --vcredist "$RUNNER_TEMP/vc_redist.x64.exe"
       - name: Into the release
         run: |
           "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/win/phreox-*.exe
