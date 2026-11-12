@@ -26,7 +26,11 @@ echo "$SHA256  $work/dav1d.tar.xz" | (sha256sum -c - || shasum -a 256 -c -)
 "$python" -c "import sys, tarfile; tarfile.open(sys.argv[1]).extractall(sys.argv[2])" "$(native "$work/dav1d.tar.xz")" "$(native "$work")"
 
 cd "$work/dav1d-$VERSION"
-meson setup build --prefix "$(native "$prefix")" --libdir lib --buildtype release --default-library static \
+# On Windows the library is built with the static C runtime, the same one the app is linked with (its .cargo config says +crt-static).
+# Without it meson uses the DLL runtime and the link of the executable fails (unresolved __imp__aligned_malloc).
+vscrt=()
+if command -v cygpath >/dev/null; then vscrt=(-Db_vscrt=mt); fi
+meson setup build --prefix "$(native "$prefix")" --libdir lib --buildtype release --default-library static "${vscrt[@]}" \
     -Denable_tools=false -Denable_tests=false -Denable_examples=false -Denable_docs=false
 ninja -C build install
 
