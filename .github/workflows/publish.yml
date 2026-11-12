@@ -156,6 +156,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: |
             phreox/phreox-frontend
             phreox/phreox-presence
@@ -249,6 +250,10 @@ jobs:
           /tmp/android-tools/bin/pip install meson==1.12.1
           sudo apt-get update
           sudo apt-get install -y ninja-build cmake pkg-config
+      - uses: Swatinem/rust-cache@v2
+        with:
+          cache-on-failure: true
+          workspaces: phreox/phreox-frontend
       - name: Signing key
         id: key
         run: |
@@ -442,6 +447,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: |
             phreox/phreox-frontend
             phreox/phreox-presence
@@ -462,10 +468,20 @@ jobs:
           curl -fsSL --retry 6 --retry-delay 5 --retry-all-errors -o "$RUNNER_TEMP/WinShell.zip" https://nsis.sourceforge.io/mediawiki/images/5/54/WinShell.zip
           echo "34e111f8aacf64c540d848fd06b9d6f3e2c10cb825ec9329a01d1141973e749b  $RUNNER_TEMP/WinShell.zip" | sha256sum -c -
           python -c "import sys, zipfile; zipfile.ZipFile(sys.argv[1]).extractall(sys.argv[2])" "$(cygpath -m "$RUNNER_TEMP/WinShell.zip")" "C:/Program Files (x86)/NSIS"
+      # dav1d takes about two minutes to build; the key is the script, which pins the version and the flags.
+      - name: dav1d cache
+        id: dav1d
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/dav1d
+          key: dav1d-windows-${{ hashFiles('scripts/build-dav1d.sh') }}
       - name: dav1d (the AV1 decoder, part of the executable)
+        if: steps.dav1d.outputs.cache-hit != 'true'
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/build-dav1d.sh "$RUNNER_TEMP/dav1d"
+      - name: dav1d paths
         working-directory: ${{ github.workspace }}
         run: |
-          bash scripts/build-dav1d.sh "$RUNNER_TEMP/dav1d"
           echo "PKG_CONFIG_PATH=$(cygpath -m "$RUNNER_TEMP/dav1d")/lib/pkgconfig" >> "$GITHUB_ENV"
           echo "SYSTEM_DEPS_DAV1D_LINK=static" >> "$GITHUB_ENV"
       - name: libopus and PortAudio of every platform
@@ -529,6 +545,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
+          cache-on-failure: true
           workspaces: |
             phreox/phreox-frontend
             phreox/phreox-presence
