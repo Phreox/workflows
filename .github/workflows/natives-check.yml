@@ -31,7 +31,6 @@ jobs:
   # Loads the Windows build the way the app does (NativeLoader, foreign function API) on a real Windows machine. It does not hold the release back: if it fails, the job is red
   # and the DLLs are still in the jar, which is no worse than having no sound library there at all.
   windows-check:
-    needs: windows
     runs-on: windows-latest
     timeout-minutes: 30
     continue-on-error: true
