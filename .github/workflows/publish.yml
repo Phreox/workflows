@@ -270,6 +270,10 @@ jobs:
         with:
           cache-on-failure: true
           workspaces: phreox/phreox-frontend
+      # The Gradle dependencies come from the cache: Maven Central answers runners that ask too often with 429 (Too Many Requests).
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
       - name: Signing key
         id: key
         run: |
@@ -294,6 +298,8 @@ jobs:
           PHREOX_APPLICATION_ID: ${{ needs.plan.outputs.channel == 'release' && 'talk.phreox.rust' || format('talk.phreox.rust.{0}', needs.plan.outputs.channel) }}
           PHREOX_APP_NAME: ${{ needs.plan.outputs.channel == 'release' && 'Phreox' || format('Phreox {0}', needs.plan.outputs.channel) }}
           PHREOX_VERSION_NAME: ${{ needs.plan.outputs.version }}
+          # What is not in the cache yet: more tries with a longer pause when Maven Central limits the runner.
+          GRADLE_OPTS: -Dorg.gradle.internal.repository.max.retries=8 -Dorg.gradle.internal.repository.initial.backoff=2000
         run: |
           # The version code grows with every run, so a newer build installs over an older one (GitHub expressions have no arithmetic).
           export PHREOX_VERSION_CODE=$((100000 + GITHUB_RUN_NUMBER))

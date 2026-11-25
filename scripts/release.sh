@@ -46,7 +46,8 @@ case "$command" in
       name="$(basename "$file")"
 
       # The same name twice is refused by GitHub: the old file goes first.
-      assets "$id" | awk -F'\t' -v name="$name" '$2 == name { print $1 }' | while read -r old; do api -X DELETE "repos/$repo/releases/assets/$old" > /dev/null; done
+      # Another job may delete the same old file at the same moment (SHA256SUMS): a file that is gone already is no error.
+      assets "$id" | awk -F'\t' -v name="$name" '$2 == name { print $1 }' | while read -r old; do api -X DELETE "repos/$repo/releases/assets/$old" > /dev/null 2>&1 || true; done
 
       curl -fsS --retry 5 --retry-all-errors --retry-delay 5 -X POST \
         -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "Content-Type: application/octet-stream" \
@@ -97,7 +98,11 @@ case "$command" in
     # one that finishes last would leave out the file of the other: so after writing the list it looks again, and writes it anew until every file that is there is in it.
     for attempt in 1 2 3 4 5 6 7 8 9 10; do
       if "$0" checksums "$id" "$work/SHA256SUMS" 2> /dev/null; then
-        "$0" upload "$id" "$work/SHA256SUMS" > /dev/null
+        # Two jobs writing the list at the same moment can trip over each other's file: then wait and write it again.
+        if ! "$0" upload "$id" "$work/SHA256SUMS" > /dev/null 2>&1; then
+          sleep $((RANDOM % 5 + 2))
+          continue
+        fi
         sleep $((RANDOM % 5 + 2))
 
         listed="$(awk '{ print $2 }' "$work/SHA256SUMS" | sort)"
