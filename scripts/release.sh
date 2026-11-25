@@ -18,7 +18,27 @@ set -euo pipefail
 : "${GH_TOKEN:?The secret RELEASES_TOKEN (write access to the contents of Phreox/releases) is not set in this repository: add it under Settings > Secrets and variables > Actions}"
 
 repo="${RELEASES_REPO:-Phreox/releases}"
-api() { gh api -H "Accept: application/vnd.github+json" "$@"; }
+# GitHub's API answers a 5xx or an empty body now and then; a call is tried again a few times before it counts as failed. A 4xx is an
+# answer (the file is not there, the token may not) and is not tried again.
+api() {
+  local attempt output status
+  for attempt in 1 2 3 4 5; do
+    output="$(gh api -H "Accept: application/vnd.github+json" "$@" 2> "${TMPDIR:-/tmp}/release-api.err")" && status=0 || status=$?
+    if [[ "$status" -eq 0 ]]; then
+      printf '%s' "$output"
+      [[ -z "$output" ]] || echo
+      return 0
+    fi
+    if grep -qE 'HTTP 4[0-9][0-9]' "${TMPDIR:-/tmp}/release-api.err" && ! grep -qE 'HTTP 429' "${TMPDIR:-/tmp}/release-api.err"; then
+      cat "${TMPDIR:-/tmp}/release-api.err" >&2
+      return "$status"
+    fi
+    echo "GitHub API call failed (attempt $attempt): $(tail -1 "${TMPDIR:-/tmp}/release-api.err")" >&2
+    sleep $((attempt * 5))
+  done
+  cat "${TMPDIR:-/tmp}/release-api.err" >&2
+  return "$status"
+}
 assets() { api "repos/$repo/releases/$1/assets?per_page=100" --paginate --jq '.[] | [.id, .name, (.digest // "")] | @tsv'; }
 
 command="${1:?command}"
