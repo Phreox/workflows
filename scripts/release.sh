@@ -65,13 +65,25 @@ case "$command" in
     for file in "$@"; do
       name="$(basename "$file")"
 
-      # The same name twice is refused by GitHub: the old file goes first.
-      # Another job may delete the same old file at the same moment (SHA256SUMS): a file that is gone already is no error.
-      assets "$id" | awk -F'\t' -v name="$name" '$2 == name { print $1 }' | while read -r old; do api -X DELETE "repos/$repo/releases/assets/$old" > /dev/null 2>&1 || true; done
+      # GitHub's upload server fails now and then (500/502) after it has already made an entry under the name, and refuses the next try with
+      # 422 because the name is taken. So every try first removes what is there under the name (an old file, or what a failed try left; another
+      # job may delete the same file at the same moment, so a file that is gone already is no error), and the tries are made here, not by curl.
+      uploaded=0
+      for attempt in 1 2 3 4 5 6 7 8; do
+        assets "$id" | awk -F'\t' -v name="$name" '$2 == name { print $1 }' | while read -r old; do api -X DELETE "repos/$repo/releases/assets/$old" > /dev/null 2>&1 || true; done
 
-      curl -fsS --retry 5 --retry-all-errors --retry-delay 5 -X POST \
-        -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "Content-Type: application/octet-stream" \
-        --data-binary @"$file" "https://uploads.github.com/repos/$repo/releases/$id/assets?name=$name" -o /dev/null
+        if curl -fsS --max-time 1800 -X POST \
+          -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" -H "Content-Type: application/octet-stream" \
+          --data-binary @"$file" "https://uploads.github.com/repos/$repo/releases/$id/assets?name=$name" -o /dev/null; then
+          uploaded=1
+          break
+        fi
+
+        echo "upload of $name failed (attempt $attempt), trying again" >&2
+        sleep $((attempt * 10))
+      done
+
+      [[ "$uploaded" -eq 1 ]] || { echo "upload of $name failed for good" >&2; exit 1; }
       echo "uploaded $name"
     done
     ;;
