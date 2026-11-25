@@ -496,8 +496,13 @@ jobs:
         run: rm -f /usr/bin/link.exe
       - name: Tools of the build (pkg-config, meson, NSIS with its WinShell plugin)
         run: |
-          choco install -y --no-progress pkgconfiglite nsis nasm
-          pip install meson ninja
+          # pkg-config comes from PyPI (pkgconf, pinned): Chocolatey's pkgconfiglite has no checksum and is refused since late 2026.
+          choco install -y --no-progress nsis nasm
+          pip install meson ninja pkgconf==3.0.7.post0
+          pkgconf="$(python -c 'import shutil; print(shutil.which("pkgconf"))')"
+          [[ -n "$pkgconf" && "$pkgconf" != None ]] || { echo "::error::pkgconf was not installed"; exit 1; }
+          cp "$pkgconf" "$(dirname "$pkgconf")/pkg-config.exe"
+          echo "PKG_CONFIG=$pkgconf" >> "$GITHUB_ENV"
           echo "C:\\Program Files (x86)\\NSIS" >> "$GITHUB_PATH"
           echo "C:\\Program Files\\NASM" >> "$GITHUB_PATH"
 
