@@ -1,6 +1,6 @@
 name: java
 description: >
-  Java 25 (Temurin), tried up to three times. The JDK comes from a GitHub release download, which answers 504 now and then; a job should not fail
+  Java 25 (Temurin), tried up to three times, the Maven repository cached with a fallback, and Maven told to wait out rate limits. The JDK comes from a GitHub release download, which answers 504 now and then; a job should not fail
   for that.
 inputs:
   cache:
@@ -9,14 +9,24 @@ inputs:
 runs:
   using: composite
   steps:
+    # The Maven repository, with a fallback: a changed pom.xml starts from the last cache and fetches only what is new. Without it every job
+    # fetched everything again from Maven Central at once, which then answered 429 (Too Many Requests).
+    - if: inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.m2/repository
+        key: maven-${{ runner.os }}-${{ runner.arch }}-${{ hashFiles('phreox/**/pom.xml') }}
+        restore-keys: |
+          maven-${{ runner.os }}-${{ runner.arch }}-
+    # Maven tries a download that Central refused with 429 or 503 again, ten times and 10 s apart (instead of 3 times 5 s apart).
+    - shell: bash
+      run: echo "MAVEN_ARGS=-Daether.connector.http.retryHandler.count=10 -Daether.connector.http.retryHandler.interval=10000" >> "$GITHUB_ENV"
     - id: first
       uses: actions/setup-java@v4
       continue-on-error: true
       with:
         distribution: temurin
         java-version: "25"
-        cache: ${{ inputs.cache == 'true' && 'maven' || '' }}
-        cache-dependency-path: ${{ inputs.cache == 'true' && 'phreox/pom.xml' || '' }}
     - if: steps.first.outcome == 'failure'
       shell: bash
       run: |
@@ -29,8 +39,6 @@ runs:
       with:
         distribution: temurin
         java-version: "25"
-        cache: ${{ inputs.cache == 'true' && 'maven' || '' }}
-        cache-dependency-path: ${{ inputs.cache == 'true' && 'phreox/pom.xml' || '' }}
     - if: steps.first.outcome == 'failure' && steps.second.outcome == 'failure'
       shell: bash
       run: |
@@ -41,5 +49,3 @@ runs:
       with:
         distribution: temurin
         java-version: "25"
-        cache: ${{ inputs.cache == 'true' && 'maven' || '' }}
-        cache-dependency-path: ${{ inputs.cache == 'true' && 'phreox/pom.xml' || '' }}
