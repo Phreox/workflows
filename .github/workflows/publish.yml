@@ -312,7 +312,8 @@ jobs:
           "$RELEASE" upload "${{ needs.plan.outputs.release }}" "$RUNNER_TEMP"/phreox-*-android-arm64.apk
           "$RELEASE" refresh-checksums "${{ needs.plan.outputs.release }}"
   service:
-    needs: plan
+    needs: [plan, natives]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     runs-on: ubuntu-latest
     env:
       GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
@@ -329,9 +330,20 @@ jobs:
       - uses: ./.github/actions/java
         with:
           cache: "true"
+      # libphreox_mls of both Linux builds, into the jar: without it the service refuses every private conversation (no plain chat anywhere).
+      - name: libphreox_mls for the service
+        run: |
+          for arch in x64 arm64; do
+            name="$("$RELEASE" names "${{ needs.plan.outputs.helpers }}" "natives-linux-$arch.tar.gz" | head -1)"
+            [[ -n "$name" ]] || { echo "::error::natives-linux-$arch.tar.gz is missing, the service would have no end-to-end encryption"; exit 1; }
+            mkdir -p "$RUNNER_TEMP/natives" phreox-service/src/main/resources/natives/linux-$arch
+            (cd "$RUNNER_TEMP/natives" && "$RELEASE" download "${{ needs.plan.outputs.helpers }}" "$name" "$name" && tar -xzf "$name" "linux-$arch/libphreox_mls.so")
+            cp "$RUNNER_TEMP/natives/linux-$arch/libphreox_mls.so" phreox-service/src/main/resources/natives/linux-$arch/
+          done
       - name: phreox-service.jar
         run: |
           mvn -B -q -pl phreox-service -am -DskipTests package
+          unzip -l phreox-service/target/phreox-service.jar | grep -q 'natives/linux-x64/libphreox_mls.so' || { echo "::error::the service jar has no libphreox_mls"; exit 1; }
           # The Pterodactyl egg and its supervisor take this file: phreox-service-<channel>-<version>.jar
           cp phreox-service/target/phreox-service.jar "$RUNNER_TEMP/phreox-service-${{ needs.plan.outputs.channel }}-${{ needs.plan.outputs.version }}.jar"
       - name: Into the release
